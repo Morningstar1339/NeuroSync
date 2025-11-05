@@ -1,0 +1,537 @@
+{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang1033{\fonttbl{\f0\fnil\fcharset0 Times New Roman;}{\f1\fnil\fcharset1 Cambria Math;}{\f2\fnil\fcharset0 Calibri;}}
+{\*\generator Riched20 10.0.19041}{\*\mmathPr\mmathFont1\mwrapIndent1440 }\viewkind4\uc1 
+\pard\sa200\sl276\slmult1\f0\fs24\lang9 # Supplement Tracker App - Complete Specification\par
+\par
+## Project Overview\par
+\par
+**Purpose:** A self-experimentation/quantified-self app to study how supplements affect cognitive performance and physical symptoms through data correlation.\par
+\par
+**Core Philosophy:** Frictionless logging. Speed and simplicity over flashiness. Every interaction should be instant - no animations, no waiting, no fluff. If the user has to wait for loading or animations, the project has failed.\par
+\par
+**Target Platform:** Cross-platform mobile app (Android/iOS)\par
+\par
+**Development Approach:** Local storage initially, with CSV export for data analysis\par
+\par
+---\par
+\par
+## Core Features\par
+\par
+### 1. Home Screen\par
+\par
+**Layout:**\par
+- 3 large buttons prominently displayed:\par
+  - "Log Supplement"\par
+  - "Log Symptom"  \par
+  - "Cognitive Test"\par
+- Small menu button (bottom corner)\par
+- Small settings button (opposite bottom corner)\par
+\par
+**Design Requirements:**\par
+- Instant boot time\par
+- No background processes\par
+- No ads\par
+- Minimal, clean interface\par
+\par
+---\par
+\par
+### 2. Supplement Logging\par
+\par
+#### Supplement List View\par
+\par
+When "Log Supplement" is tapped, display a scrollable list of supplement buttons. Each button shows:\par
+\par
+- Small icon (customizable)\par
+- Supplement name\par
+- Standard/default dosage\par
+- Color-changing clock icon (indicates if on schedule)\par
+- Microscope icon (indicates if part of a cognitive study)\par
+- Pencil icon (edit dosage/time taken)\par
+- Plus icon at bottom (add new supplement)\par
+\par
+#### Logging Flow\par
+\par
+**When supplement button is tapped:**\par
+1. Confirmation message displays for 10 seconds\par
+2. During confirmation period, user can:\par
+   - Tap "Home" to return to home screen\par
+   - Tap "Edit" to modify or delete entry\par
+   - Do nothing (auto-confirms after 10s)\par
+   - Close app or sleep phone (auto-confirms)\par
+3. Entry is logged with timestamp\par
+\par
+**Data Captured:**\par
+- Supplement name\par
+- Dosage amount\par
+- Timestamp (second precision)\par
+- Default: current time when button tapped\par
+- User can edit actual time taken via edit icon\par
+\par
+**Design Philosophy:** Minimize taps and thinking for frequently repeated tasks. Default behavior should be correct 95% of the time.\par
+\par
+---\par
+\par
+### 3. Symptom Logging\par
+\par
+#### Body Diagram Interface\par
+\par
+Display interactive body diagram with tappable regions:\par
+- Head\par
+- Thorax\par
+- Abdomen\par
+- Pelvis\par
+- Arms (left/right implied)\par
+- Hands (left/right implied)\par
+- Legs (left/right implied)\par
+- Feet (left/right implied)\par
+\par
+#### Symptom Selection\par
+\par
+When region is tapped:\par
+1. Display list of previously logged symptoms for that region\par
+2. Show "Add New Custom Symptom" option\par
+3. When symptom selected, capture:\par
+   - **Severity scale:** 1-5 slider/buttons\par
+   - **Notes field:** Optional text input\par
+   - **Timestamp:** Second precision\par
+\par
+**Data Captured:**\par
+- Body region\par
+- Symptom description\par
+- Severity (1-5)\par
+- Notes (optional)\par
+- Timestamp\par
+\par
+---\par
+\par
+### 4. Cognitive Tests\par
+\par
+Main cognitive test menu shows 4 options:\par
+- "Reflexes"\par
+- "Memory"\par
+- "Judgment"\par
+- "All 3"\par
+\par
+**Important:** Results have a 24-hour display delay to prevent gaming the system and learning effects.\par
+\par
+#### 4.1 Reflexes Test\par
+\par
+**Duration:** 10 seconds\par
+\par
+**Mechanics:**\par
+- Small bubble (~1 cm diameter) appears at random location\par
+- User taps bubble\par
+- Bubble disappears, new bubble appears elsewhere\par
+- Repeat until time expires\par
+\par
+**Scoring:**\par
+- +1 point per successful tap\par
+- -1 point per missed tap (tapping empty space)\par
+- Track total score\par
+\par
+**Purpose:** Tests reaction time and hand-eye coordination. No learning curve - pure gut reaction.\par
+\par
+#### 4.2 Memory Test\par
+\par
+**Duration:** 60 seconds\par
+\par
+**Setup:**\par
+- 48 cards in grid (6x8)\par
+- 24 unique pairs\par
+- Each card: 1 of 4 shapes (Triangle, Square, Circle, Cross) in 1 of 6 colors\par
+- 4 shapes \'d7 6 colors = 24 combinations, each appearing twice\par
+\par
+**Game Flow:**\par
+1. **Initial flash:** All cards shown face-up for 0.2 seconds\par
+   - Purpose: Orientation aid, not memorization window\par
+   - Too brief to scan specific pairs, gives general layout sense\par
+2. All cards flip to blank\par
+3. User taps first card \f1\u8594?\f0  reveals it\par
+4. User taps second card \f1\u8594?\f0  reveals it\par
+5. **If match:**\par
+   - +2 points\par
+   - Cards remain face-up\par
+6. **If no match:**\par
+   - -1 point\par
+   - Cards flip back to blank\par
+7. Repeat until all pairs found or timer expires\par
+8. **End penalty:** -4 points per unpaired card\par
+\par
+**Design Note:** Wrong guesses still provide information about card locations. Test measures visual memory and pattern recognition under time pressure.\par
+\par
+#### 4.3 Judgment Test (Minimum Spanning Tree)\par
+\par
+**Duration:** 30 seconds\par
+\par
+**Setup:**\par
+- 12 dots placed randomly on screen\par
+- Dot placement algorithm:\par
+  - Reject if within 1/6 screen width of another dot\par
+  - Reject if within 1/12 screen width of edge\par
+  - Ensures well-distributed dots, none too close\par
+\par
+**Objective:** Connect all dots into single network with minimum total line length\par
+\par
+**Controls:**\par
+- **Add connection:** Drag between two dots OR tap two dots in sequence\par
+- **Delete connection:** Tap two connected dots in sequence OR drag between already-connected dots\par
+- When all dots connected into single network \f1\u8594?\f0  "Submit" button appears\par
+\par
+**Scoring:**\par
+```\par
+Base Score = (Optimal Solution Length / User Solution Length) \'d7 100\par
+Rounded to nearest integer\par
+```\par
+\par
+**Time Bonus (if score \f1\u8805?\f0  91):**\par
+```\par
+Bonus = [(Score - 90) \'d7 Seconds Remaining] / 5\par
+Rounded to nearest integer\par
+\par
+Example: Score 93 with 17 seconds left\par
+Bonus = [(93-90) \'d7 17] / 5 = 10 points\par
+```\par
+\par
+**Purpose:** Tests spatial reasoning and optimization intuition. Infinite possible patterns prevent heuristic learning - pure gut judgment.\par
+\par
+---\par
+\par
+### 5. Supplement Management\par
+\par
+#### Edit Supplement (via Main Menu)\par
+\par
+**Immutable Fields:**\par
+- Supplement name\par
+- Dosage unit\par
+\par
+**Editable Fields:**\par
+- Default dosage amount\par
+- Icon\par
+- Scheduling parameters\par
+- Associated cognitive studies\par
+\par
+#### Scheduling System\par
+\par
+**Basic Reminders:**\par
+- Set reminder time(s)\par
+- Audible notification at scheduled time\par
+- Custom repeat intervals\par
+- Custom duration\par
+- Multiple reminders per supplement allowed\par
+  - Example: 7:00 AM and 1:00 PM daily\par
+\par
+**Exclusions & Warnings:**\par
+Users can set safety rules:\par
+- **Time-based:** "Do not take between XX:XX PM and YY:YY AM"\par
+- **Dosage-based:** "Do not exceed X mg in Y hours"\par
+\par
+**Visual Indicators:**\par
+- Clock icon turns **red** when exclusions active\par
+- Warning displayed when user attempts to log during exclusion period\par
+- User can override warning but is informed\par
+\par
+---\par
+\par
+### 6. Cognitive Study Protocols\par
+\par
+Users can associate cognitive tests with supplements to study effects.\par
+\par
+#### Study Types\par
+\par
+**Event-Based (Linked to Supplement Consumption):**\par
+- Example: "Test memory every 5 minutes for 3 hours after taking Supplement X"\par
+- Example: "Test judgment every hour for 8 hours after taking Supplement Y"\par
+- Minimum interval: Test duration + 30 seconds\par
+\par
+**Schedule-Based (Daily Routine):**\par
+- Example: "Test at wake, 1 hour after wake, noon, and 9:00 PM"\par
+- Not linked to supplement consumption\par
+\par
+**Overlap Handling:**\par
+- If two studies schedule tests within (test duration + 30s) interval\par
+- Prompt user only once\par
+- Data point counts as valid for both studies\par
+- Prevents redundant testing\par
+\par
+---\par
+\par
+### 7. Sleep Tracking\par
+\par
+#### Automatic Detection\par
+\par
+**Mechanism:** Detect when phone becomes idle/active\par
+\par
+**Configuration:**\par
+- User sets normal sleep time in settings\par
+- Prevents false positives (e.g., leaving phone charging while working)\par
+\par
+**Data Captured:**\par
+- Sleep start time\par
+- Sleep end time  \par
+- Duration\par
+- Second precision\par
+\par
+#### Manual Override\par
+\par
+- User can review sleep log in main menu\par
+- Edit entries as needed\par
+- No manual "go to sleep now" button needed\par
+\par
+#### Sleep Reminders\par
+\par
+Two options:\par
+1. **Time-based:** Alert at specific scheduled time\par
+2. **Duration-based:** Alert X hours after last sleep (default: 16 hours)\par
+\par
+---\par
+\par
+## Data Architecture\par
+\par
+### Database Schema Requirements\par
+\par
+All timestamps use **second precision** for both supplements and symptoms.\par
+\par
+#### Supplements Table\par
+```\par
+- id (primary key)\par
+- name (unique)\par
+- default_dosage (number)\par
+- dosage_unit (text)\par
+- icon_id (reference)\par
+- schedule_enabled (boolean)\par
+- study_enabled (boolean)\par
+```\par
+\par
+#### Supplement_Logs Table\par
+```\par
+- id (primary key)\par
+- supplement_id (foreign key)\par
+- timestamp (datetime, second precision)\par
+- dosage (number)\par
+- notes (text, optional)\par
+```\par
+\par
+#### Symptoms Table\par
+```\par
+- id (primary key)\par
+- body_region (enum)\par
+- description (text)\par
+- last_used (datetime)\par
+```\par
+\par
+#### Symptom_Logs Table\par
+```\par
+- id (primary key)\par
+- symptom_id (foreign key)\par
+- timestamp (datetime, second precision)\par
+- severity (integer, 1-5)\par
+- notes (text, optional)\par
+```\par
+\par
+#### Cognitive_Test_Results Table\par
+```\par
+- id (primary key)\par
+- test_type (enum: reflexes, memory, judgment)\par
+- timestamp (datetime)\par
+- score (integer)\par
+- raw_data (json, test-specific metrics)\par
+- study_id (foreign key, nullable)\par
+- supplement_log_id (foreign key, nullable)\par
+```\par
+\par
+#### Sleep_Logs Table\par
+```\par
+- id (primary key)\par
+- sleep_start (datetime)\par
+- sleep_end (datetime)\par
+- duration_seconds (integer)\par
+- manually_edited (boolean)\par
+```\par
+\par
+#### Schedules Table\par
+```\par
+- id (primary key)\par
+- supplement_id (foreign key)\par
+- time (time)\par
+- repeat_interval (text)\par
+- enabled (boolean)\par
+```\par
+\par
+#### Exclusions Table\par
+```\par
+- id (primary key)\par
+- supplement_id (foreign key)\par
+- exclusion_type (enum: time_window, dosage_limit)\par
+- parameters (json)\par
+```\par
+\par
+#### Study_Protocols Table\par
+```\par
+- id (primary key)\par
+- supplement_id (foreign key, nullable)\par
+- test_type (enum)\par
+- interval (integer, minutes)\par
+- duration (integer, minutes)\par
+- schedule_type (enum: event_based, daily_schedule)\par
+- parameters (json)\par
+```\par
+\par
+---\par
+\par
+## Technical Recommendations\par
+\par
+### Recommended Tech Stack\par
+\par
+**Option 1: Flutter (Recommended)**\par
+- Best performance for instant UI\par
+- True cross-platform\par
+- Native feel\par
+- SQLite integration: `sqflite` package\par
+- No bridge overhead\par
+\par
+**Option 2: React Native**\par
+- More familiar if David knows React\par
+- SQLite: `expo-sqlite`\par
+- Good performance with bare workflow\par
+\par
+### Storage & Export\par
+\par
+**Local Storage:**\par
+- SQLite database\par
+- No cloud sync initially\par
+- Fast, reliable, proven\par
+\par
+**Data Export:**\par
+- CSV format\par
+- Export all tables\par
+- Include readable timestamps\par
+- Option to export date ranges\par
+\par
+### Performance Requirements\par
+\par
+**Critical: App must feel instant**\par
+- Database queries < 50ms\par
+- UI renders < 16ms (60fps)\par
+- No loading spinners for normal operations\par
+- No animations (per user requirement)\par
+- Background processes minimized\par
+\par
+---\par
+\par
+## Development Priorities\par
+\par
+### Phase 1: Core Infrastructure\par
+1. Database schema implementation\par
+2. Home screen UI\par
+3. Data persistence layer\par
+4. CSV export functionality\par
+\par
+### Phase 2: Supplement Logging\par
+1. Supplement list view\par
+2. Add/edit supplements\par
+3. Logging flow with confirmation\par
+4. Basic scheduling notifications\par
+\par
+### Phase 3: Cognitive Tests\par
+1. Reflexes test (simplest)\par
+2. Memory test\par
+3. Judgment test (MST algorithm - most complex)\par
+4. Results storage with 24-hour delay\par
+5. "All 3" test sequence\par
+\par
+### Phase 4: Symptoms & Sleep\par
+1. Body diagram interface\par
+2. Symptom logging with severity/notes\par
+3. Sleep tracking via idle detection\par
+4. Sleep log editor\par
+\par
+### Phase 5: Advanced Features\par
+1. Scheduling exclusions & warnings\par
+2. Cognitive study protocols\par
+3. Study overlap detection\par
+4. Advanced scheduling options\par
+\par
+### Phase 6: Polish & Testing\par
+1. User testing\par
+2. Performance optimization\par
+3. Bug fixes\par
+4. Documentation\par
+\par
+---\par
+\par
+## Key Design Decisions (from Q&A)\par
+\par
+### Cognitive Tests\par
+- **Judgment test learning curve:** Not steep - relies on gut intuition, infinite patterns\par
+- **Memory flash duration:** 0.2s intentional - orientation aid, not memorization window\par
+- **Results delay:** 24 hours prevents gaming and learning effects\par
+- **Baseline tracking:** Yes, track improvement over time\par
+\par
+### Data Capture\par
+- **Timestamp precision:** Seconds for supplements and symptoms\par
+- **Supplement timing:** Default to "now", editable if needed\par
+- **Symptom extras:** Severity (1-5) + optional notes added per discussion\par
+\par
+### Study Design\par
+- **Blinding/placebo:** Not implemented - would require second person and complicate UX\par
+- **Results visibility:** Delayed 24 hours\par
+\par
+### Technical\par
+- **Data export:** CSV format\par
+- **Storage:** Local only initially\par
+- **Platform:** Cross-platform (Flutter or React Native)\par
+\par
+### Sleep Tracking\par
+- **Manual button:** Not needed - idle detection + manual edit is sufficient\par
+- **Edit capability:** Yes, via sleep menu\par
+\par
+---\par
+\par
+## Critical Success Factors\par
+\par
+1. **Speed:** Every interaction must be instant\par
+2. **Simplicity:** Minimize reading, thinking, taps for common tasks\par
+3. **Reliability:** No crashes, no data loss\par
+4. **Unobtrusiveness:** No ads, no unnecessary background processes\par
+5. **Data Integrity:** Accurate timestamps, proper study protocol adherence\par
+\par
+---\par
+\par
+## Next Steps for David\par
+\par
+1. **Choose tech stack** (recommend Flutter)\par
+2. **Set up development environment**\par
+3. **Initialize project with Claude Code:**\par
+   ```bash\par
+   claude-code init supplement-tracker\par
+   ```\par
+4. **Implement database schema** (Phase 1)\par
+5. **Build home screen** (Phase 1)\par
+6. **Iterate feature-by-feature** following priority order\par
+\par
+---\par
+\par
+## Notes\par
+\par
+- Original spec author is not a professional coder but has clear vision\par
+- David has more technical expertise and Claude Code access\par
+- Focus on making the app feel "right" - instant and effortless\par
+- Data analysis methodology TBD - focus on collection infrastructure first\par
+- Future consideration: Publishing/sharing with others\par
+\par
+---\par
+\par
+## Questions for David During Development\par
+\par
+1. Preference between Flutter vs React Native?\par
+2. Any specific CI/CD pipeline requirements?\par
+3. Need for automated testing framework?\par
+4. Icon/asset design - custom or using icon library?\par
+5. Notification system preferences (native vs library)?\par
+\par
+---\par
+\par
+*Document Version: 1.0*  \par
+*Last Updated: October 27, 2025*  \par
+*Contact: [Original spec author] \f1\u8594?\f0  David [Technical lead]*\f2\fs22\lang9\par
+}
+ 

@@ -1,0 +1,468 @@
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, TouchableOpacity, ScrollView, Alert, KeyboardAvoidingView, Platform, Dimensions, StatusBar } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const { height: screenHeight } = Dimensions.get('window');
+const isSmallScreen = screenHeight < 700;
+const isVerySmallScreen = screenHeight < 600;
+
+interface SleepSettings {
+  bedtimeHour: number; // 1-12
+  bedtimeMinute: number; // 0, 5, 10, 15, etc.
+  bedtimeAmPm: 'AM' | 'PM';
+}
+
+const SETTINGS_KEY = 'sleep_settings';
+
+const defaultSettings: SleepSettings = {
+  bedtimeHour: 10,
+  bedtimeMinute: 0,
+  bedtimeAmPm: 'PM',
+};
+
+export default function SettingsScreen() {
+  const router = useRouter();
+  const [settings, setSettings] = useState<SleepSettings>(defaultSettings);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      const saved = await AsyncStorage.getItem(SETTINGS_KEY);
+      if (saved) {
+        setSettings({ ...defaultSettings, ...JSON.parse(saved) });
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveSettings = async (newSettings: SleepSettings) => {
+    try {
+      await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(newSettings));
+      setSettings(newSettings);
+      Alert.alert('Settings Saved', 'Your bedtime has been updated for automatic sleep detection.');
+    } catch (error) {
+      console.error('Error saving settings:', error);
+      Alert.alert('Error', 'Failed to save settings. Please try again.');
+    }
+  };
+
+  const formatBedtime = (): string => {
+    return `${settings.bedtimeHour}:${settings.bedtimeMinute.toString().padStart(2, '0')} ${settings.bedtimeAmPm}`;
+  };
+
+  // Generate hour options (1-12)
+  const hourOptions = Array.from({ length: 12 }, (_, i) => i + 1);
+  
+  // Generate minute options (0, 5, 10, 15, ..., 55)
+  const minuteOptions = Array.from({ length: 12 }, (_, i) => i * 5);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ThemedView style={styles.loadingContainer}>
+          <ThemedText>Loading...</ThemedText>
+        </ThemedView>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <KeyboardAvoidingView 
+        style={styles.keyboardAvoidingView}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : StatusBar.currentHeight || 0}
+      >
+        <ThemedView style={styles.innerContainer}>
+          {/* Fixed Header */}
+          <ThemedView style={styles.header}>
+            <ThemedText type="title" style={styles.title}>Sleep Settings</ThemedText>
+            <ThemedText style={styles.subtitle}>
+              Set your normal bedtime for automatic sleep detection
+            </ThemedText>
+          </ThemedView>
+
+          {/* Scrollable Content */}
+          <ScrollView 
+            style={styles.scrollView} 
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+            nestedScrollEnabled={true}
+            keyboardShouldPersistTaps="handled"
+          >
+            <ThemedView style={styles.section}>
+              <ThemedText style={styles.sectionTitle}>Normal Bedtime</ThemedText>
+              <ThemedText style={styles.currentValue}>{formatBedtime()}</ThemedText>
+              
+              <ThemedView style={styles.timeSelector}>
+                {/* Hour Dropdown */}
+                <ThemedView style={styles.dropdownContainer}>
+                  <ThemedText style={styles.dropdownLabel}>Hour</ThemedText>
+                  <ScrollView 
+                    style={styles.dropdown}
+                    contentContainerStyle={styles.dropdownContent}
+                    showsVerticalScrollIndicator={true}
+                    nestedScrollEnabled={true}
+                    bounces={false}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {hourOptions.map((hour) => (
+                      <TouchableOpacity
+                        key={hour}
+                        style={[
+                          styles.dropdownOption,
+                          settings.bedtimeHour === hour && styles.dropdownOptionSelected
+                        ]}
+                        onPress={() => setSettings({...settings, bedtimeHour: hour})}
+                      >
+                        <ThemedText style={[
+                          styles.dropdownOptionText,
+                          settings.bedtimeHour === hour && styles.dropdownOptionTextSelected
+                        ]}>
+                          {hour}
+                        </ThemedText>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </ThemedView>
+
+                {/* Minute Dropdown */}
+                <ThemedView style={styles.dropdownContainer}>
+                  <ThemedText style={styles.dropdownLabel}>Minute</ThemedText>
+                  <ScrollView 
+                    style={styles.dropdown}
+                    contentContainerStyle={styles.dropdownContent}
+                    showsVerticalScrollIndicator={true}
+                    nestedScrollEnabled={true}
+                    bounces={false}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {minuteOptions.map((minute) => (
+                      <TouchableOpacity
+                        key={minute}
+                        style={[
+                          styles.dropdownOption,
+                          settings.bedtimeMinute === minute && styles.dropdownOptionSelected
+                        ]}
+                        onPress={() => setSettings({...settings, bedtimeMinute: minute})}
+                      >
+                        <ThemedText style={[
+                          styles.dropdownOptionText,
+                          settings.bedtimeMinute === minute && styles.dropdownOptionTextSelected
+                        ]}>
+                          {minute.toString().padStart(2, '0')}
+                        </ThemedText>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </ThemedView>
+
+                {/* AM/PM Toggle */}
+                <ThemedView style={styles.dropdownContainer}>
+                  <ThemedText style={styles.dropdownLabel}>Period</ThemedText>
+                  <ThemedView style={styles.ampmToggle}>
+                    <TouchableOpacity
+                      style={[
+                        styles.ampmButton,
+                        settings.bedtimeAmPm === 'AM' && styles.ampmButtonSelected
+                      ]}
+                      onPress={() => setSettings({...settings, bedtimeAmPm: 'AM'})}
+                    >
+                      <ThemedText style={[
+                        styles.ampmText,
+                        settings.bedtimeAmPm === 'AM' && styles.ampmTextSelected
+                      ]}>
+                        AM
+                      </ThemedText>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.ampmButton,
+                        settings.bedtimeAmPm === 'PM' && styles.ampmButtonSelected
+                      ]}
+                      onPress={() => setSettings({...settings, bedtimeAmPm: 'PM'})}
+                    >
+                      <ThemedText style={[
+                        styles.ampmText,
+                        settings.bedtimeAmPm === 'PM' && styles.ampmTextSelected
+                      ]}>
+                        PM
+                      </ThemedText>
+                    </TouchableOpacity>
+                  </ThemedView>
+                </ThemedView>
+              </ThemedView>
+            </ThemedView>
+
+            <ThemedView style={styles.infoSection}>
+              <ThemedText style={styles.infoTitle}>How Sleep Detection Works</ThemedText>
+              <ThemedText style={styles.infoText}>
+                • Sleep starts 10 minutes after phone use ends during your sleep window
+              </ThemedText>
+              <ThemedText style={styles.infoText}>
+                • Sleep ends when you use your phone consistently (3+ uses in 30 min)
+              </ThemedText>
+              <ThemedText style={styles.infoText}>
+                • Short interruptions (under 1 minute) are ignored
+              </ThemedText>
+            </ThemedView>
+
+            {/* Spacer to ensure buttons don't overlap content */}
+            <ThemedView style={styles.bottomSpacer} />
+          </ScrollView>
+
+          {/* Fixed Bottom Buttons */}
+          <ThemedView style={styles.buttonContainer}>
+            <TouchableOpacity
+              style={styles.saveButton}
+              onPress={() => saveSettings(settings)}
+            >
+              <ThemedText style={styles.saveButtonText}>Save Bedtime</ThemedText>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.backButton} 
+              onPress={() => router.back()}
+            >
+              <ThemedText style={styles.backButtonText}>Back</ThemedText>
+            </TouchableOpacity>
+          </ThemedView>
+        </ThemedView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  keyboardAvoidingView: {
+    flex: 1,
+  },
+  innerContainer: {
+    flex: 1,
+    paddingHorizontal: isVerySmallScreen ? 16 : 20,
+  },
+  header: {
+    alignItems: 'center',
+    paddingTop: isVerySmallScreen ? 16 : 20,
+    paddingBottom: isVerySmallScreen ? 16 : 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5EA',
+    marginBottom: isVerySmallScreen ? 16 : 20,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 16,
+    textAlign: 'center',
+    opacity: 0.7,
+    paddingHorizontal: 20,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 20,
+    flexGrow: 1,
+  },
+  section: {
+    marginBottom: 32,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  currentValue: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    marginBottom: 30,
+    color: '#007AFF',
+    textAlign: 'center',
+  },
+  timeSelector: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: isVerySmallScreen ? 6 : isSmallScreen ? 8 : 12,
+    minHeight: isVerySmallScreen ? 200 : isSmallScreen ? 220 : 250,
+    marginBottom: 20,
+    paddingHorizontal: 4,
+  },
+  dropdownContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  dropdownLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  dropdown: {
+    backgroundColor: '#F2F2F7',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D1D6',
+    height: isVerySmallScreen ? 140 : isSmallScreen ? 160 : 180,
+    width: '100%',
+    maxHeight: isVerySmallScreen ? 140 : isSmallScreen ? 160 : 180,
+    elevation: Platform.OS === 'android' ? 2 : 0,
+    shadowColor: Platform.OS === 'ios' ? '#000' : undefined,
+    shadowOffset: Platform.OS === 'ios' ? { width: 0, height: 1 } : undefined,
+    shadowOpacity: Platform.OS === 'ios' ? 0.1 : undefined,
+    shadowRadius: Platform.OS === 'ios' ? 2 : undefined,
+  },
+  dropdownContent: {
+    paddingVertical: 4,
+  },
+  dropdownOption: {
+    paddingVertical: isVerySmallScreen ? 10 : 12,
+    paddingHorizontal: isVerySmallScreen ? 12 : 16,
+    borderRadius: 6,
+    marginVertical: 1,
+    marginHorizontal: 4,
+    alignItems: 'center',
+    minHeight: isVerySmallScreen ? 40 : 44,
+  },
+  dropdownOptionSelected: {
+    backgroundColor: '#007AFF',
+  },
+  dropdownOptionText: {
+    fontSize: 16,
+    color: '#000',
+  },
+  dropdownOptionTextSelected: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  ampmToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#F2F2F7',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D1D6',
+    padding: 4,
+    width: '100%',
+    height: isVerySmallScreen ? 60 : 80,
+    elevation: Platform.OS === 'android' ? 2 : 0,
+    shadowColor: Platform.OS === 'ios' ? '#000' : undefined,
+    shadowOffset: Platform.OS === 'ios' ? { width: 0, height: 1 } : undefined,
+    shadowOpacity: Platform.OS === 'ios' ? 0.1 : undefined,
+    shadowRadius: Platform.OS === 'ios' ? 2 : undefined,
+  },
+  ampmButton: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    marginHorizontal: 2,
+  },
+  ampmButtonSelected: {
+    backgroundColor: '#007AFF',
+  },
+  ampmText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#000',
+  },
+  ampmTextSelected: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  infoSection: {
+    backgroundColor: '#F2F2F7',
+    padding: 20,
+    borderRadius: 12,
+    marginTop: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+  },
+  infoTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+    color: '#000',
+    textAlign: 'center',
+  },
+  infoText: {
+    fontSize: 14,
+    marginBottom: 8,
+    color: '#333',
+    lineHeight: 20,
+  },
+  bottomSpacer: {
+    height: isVerySmallScreen ? 80 : isSmallScreen ? 100 : 120,
+  },
+  buttonContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: isVerySmallScreen ? 16 : 20,
+    right: isVerySmallScreen ? 16 : 20,
+    paddingTop: 16,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 16,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5EA',
+    gap: isVerySmallScreen ? 8 : 12,
+    elevation: Platform.OS === 'android' ? 4 : 0,
+    shadowColor: Platform.OS === 'ios' ? '#000' : undefined,
+    shadowOffset: Platform.OS === 'ios' ? { width: 0, height: -2 } : undefined,
+    shadowOpacity: Platform.OS === 'ios' ? 0.1 : undefined,
+    shadowRadius: Platform.OS === 'ios' ? 4 : undefined,
+  },
+  saveButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  saveButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  backButton: {
+    backgroundColor: '#8E8E93',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  backButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+});

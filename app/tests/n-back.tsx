@@ -1,0 +1,633 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { StyleSheet, TouchableOpacity, View, Dimensions, Alert, ScrollView } from 'react-native';
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { useRouter } from 'expo-router';
+import { useThemeColor } from '@/hooks/use-theme-color';
+import { saveCognitiveTestResult } from '@/database/cognitive-tests';
+import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
+
+const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
+const SHAPE_SIZE = Math.min(250, screenWidth * 0.6, screenHeight * 0.25); // Responsive size with max 250px
+const TRIAL_COUNT = 20;
+// Removed auto-advance timers - user controls pacing now
+const N_BACK_LEVEL = 2; // 2-back
+
+const SHAPES = [
+  { id: 'circle', name: 'Circle', symbol: '●' },
+  { id: 'square', name: 'Square', symbol: '■' },
+  { id: 'triangle', name: 'Triangle', symbol: '▲' }
+];
+
+interface Trial {
+  id: number;
+  shape: string;
+  isMatch: boolean;
+  userResponse: boolean | null;
+  responseTime: number | null;
+}
+
+export default function NBackTestScreen() {
+  const router = useRouter();
+  const tintColor = useThemeColor({}, 'tint');
+  
+  const [gameState, setGameState] = useState<'ready' | 'instructions' | 'playing' | 'finished'>('ready');
+  const [currentTrial, setCurrentTrial] = useState(0);
+  const [currentShape, setCurrentShape] = useState<string | null>(null);
+  const [trials, setTrials] = useState<Trial[]>([]);
+  const [showingStimulus, setShowingStimulus] = useState(false);
+  const [scheduledTest, setScheduledTest] = useState<any>(null);
+  const [studyContext, setStudyContext] = useState<any>(null);
+  const [activeTestSession, setActiveTestSession] = useState<any>(null);
+  
+  const trialStartTime = useRef<number>(0);
+
+  const generateTrials = (): Trial[] => {
+    const newTrials: Trial[] = [];
+    const sequence: string[] = [];
+    
+    // First generate the sequence ensuring proper match distribution
+    for (let i = 0; i < TRIAL_COUNT; i++) {
+      if (i < N_BACK_LEVEL) {
+        // First N trials cannot be matches
+        const shapeIndex = Math.floor(Math.random() * SHAPES.length);
+        const shape = SHAPES[shapeIndex]?.id || 'circle';
+        sequence.push(shape);
+        newTrials.push({
+          id: i,
+          shape,
+          isMatch: false,
+          userResponse: null,
+          responseTime: null
+        });
+      } else {
+        // Determine if this should be a match (aim for ~30% matches)
+        const shouldBeMatch = Math.random() < 0.3;
+        
+        if (shouldBeMatch) {
+          // Use the shape from N positions back
+          const shape = sequence[i - N_BACK_LEVEL];
+          sequence.push(shape);
+          newTrials.push({
+            id: i,
+            shape,
+            isMatch: true,
+            userResponse: null,
+            responseTime: null
+          });
+        } else {
+          // Use a different shape than N positions back
+          const excludeShape = sequence[i - N_BACK_LEVEL];
+          const availableShapes = SHAPES.filter(s => s.id !== excludeShape);
+          if (availableShapes.length === 0) {
+            // Fallback if filter fails
+            const shape = SHAPES[0]?.id || 'circle';
+            sequence.push(shape);
+          } else {
+            const shapeIndex = Math.floor(Math.random() * availableShapes.length);
+            const shape = availableShapes[shapeIndex]?.id || 'circle';
+            sequence.push(shape);
+          }
+          newTrials.push({
+            id: i,
+            shape: sequence[sequence.length - 1],
+            isMatch: false,
+            userResponse: null,
+            responseTime: null
+          });
+        }
+      }
+    }
+    
+    return newTrials;
+  };
+
+  const handleResponse = (isMatch: boolean) => {
+    if (currentTrial >= trials.length) return;
+    
+    const responseTime = Date.now() - trialStartTime.current;
+    const updatedTrials = [...trials];
+    updatedTrials[currentTrial] = {
+      ...updatedTrials[currentTrial],
+      userResponse: isMatch,
+      responseTime
+    };
+    setTrials(updatedTrials);
+    
+    // Move to next trial immediately after button press
+    const nextTrialIndex = currentTrial + 1;
+    
+    if (nextTrialIndex >= TRIAL_COUNT) {
+      endGame();
+      return;
+    }
+    
+    // Show next shape immediately
+    setCurrentTrial(nextTrialIndex);
+    setCurrentShape(trials[nextTrialIndex].shape);
+    setShowingStimulus(true);
+    trialStartTime.current = Date.now();
+  };
+
+  // Removed nextTrial function - no longer needed with user-controlled pacing
+
+  const startInstructions = () => {
+    setGameState('instructions');
+    
+    // Show instructions for 1 second then start immediately
+    setTimeout(() => {
+      startGameNow();
+    }, 1000);
+  };
+
+  const startGame = async () => {
+    try {
+      const activeSession = await isUserInActiveTestSession();
+      if (activeSession.isActive && activeSession.activeTest?.test_type !== 'n_back') {
+        Alert.alert(
+          'Test Session Active',
+          `You have an active ${activeSession.activeTest?.test_type} test (${Math.ceil(activeSession.timeRemaining || 0)}s remaining). Starting another test may affect your results.\n\nContinue anyway?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Continue', onPress: () => startInstructions() }
+          ]
+        );
+        return;
+      }
+    } catch (error) {
+      console.error('Failed to check active session:', error);
+    }
+    
+    startInstructions();
+  };
+
+  const startGameNow = () => {
+    const newTrials = generateTrials();
+    
+    setGameState('playing');
+    setTrials(newTrials);
+    setCurrentTrial(0);
+    setCurrentShape(newTrials[0].shape);
+    setShowingStimulus(true);
+    trialStartTime.current = Date.now();
+  };
+
+  const endGame = async () => {
+    setGameState('finished');
+    
+    // Calculate metrics
+    const completedTrials = trials.filter(t => t.userResponse !== null);
+    const matches = trials.filter(t => t.isMatch);
+    const hits = trials.filter(t => t.isMatch && t.userResponse === true);
+    const misses = trials.filter(t => t.isMatch && t.userResponse === false);
+    const falseAlarms = trials.filter(t => !t.isMatch && t.userResponse === true);
+    const correctRejections = trials.filter(t => !t.isMatch && t.userResponse === false);
+    
+    const accuracy = (hits.length + correctRejections.length) / TRIAL_COUNT;
+    const hitRate = matches.length > 0 ? hits.length / matches.length : 0;
+    const falseAlarmRate = (TRIAL_COUNT - matches.length) > 0 ? falseAlarms.length / (TRIAL_COUNT - matches.length) : 0;
+    
+    // Calculate d-prime (signal detection theory metric)
+    const hitRateAdjusted = Math.max(0.01, Math.min(0.99, hitRate));
+    const falseAlarmRateAdjusted = Math.max(0.01, Math.min(0.99, falseAlarmRate));
+    const dPrime = normalInverse(hitRateAdjusted) - normalInverse(falseAlarmRateAdjusted);
+    
+    const averageResponseTime = completedTrials.length > 0 
+      ? completedTrials.reduce((sum, t) => sum + (t.responseTime || 0), 0) / completedTrials.length 
+      : 0;
+    
+    const hitResponseTimes = hits.filter(h => h.responseTime !== null);
+    const averageHitResponseTime = hitResponseTimes.length > 0
+      ? hitResponseTimes.reduce((sum, h) => sum + h.responseTime!, 0) / hitResponseTimes.length
+      : 0;
+    
+    const rawData = {
+      accuracy,
+      hits: hits.length,
+      misses: misses.length,
+      falseAlarms: falseAlarms.length,
+      correctRejections: correctRejections.length,
+      averageResponseTime,
+      averageHitResponseTime,
+      dPrime,
+      trials: trials
+    };
+    
+    try {
+      const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
+      const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
+      
+      const score = Math.floor(accuracy * 100);
+      await saveCognitiveTestResult('n_back', score, rawData, undefined, studyId, supplementLogId);
+      
+      if (scheduledTest) {
+        await completeScheduledTest(scheduledTest.id);
+      }
+    } catch (error) {
+      console.error('Failed to save n-back test result:', error);
+    }
+  };
+
+  // Approximation of the inverse normal distribution for d-prime calculation
+  const normalInverse = (p: number): number => {
+    const a1 = -3.969683028665376e+01;
+    const a2 = 2.209460984245205e+02;
+    const a3 = -2.759285104469687e+02;
+    const a4 = 1.383577518672690e+02;
+    const a5 = -3.066479806614716e+01;
+    const a6 = 2.506628277459239e+00;
+    
+    const b1 = -5.447609879822406e+01;
+    const b2 = 1.615858368580409e+02;
+    const b3 = -1.556989798598866e+02;
+    const b4 = 6.680131188771972e+01;
+    const b5 = -1.328068155288572e+01;
+    
+    if (p <= 0 || p >= 1) return 0;
+    
+    const q = p - 0.5;
+    if (Math.abs(q) <= 0.425) {
+      const r = 0.180625 - q * q;
+      return q * (((((a1 * r + a2) * r + a3) * r + a4) * r + a5) * r + a6) /
+                 (((((b1 * r + b2) * r + b3) * r + b4) * r + b5) * r + 1);
+    }
+    
+    const r = q < 0 ? p : 1 - p;
+    const t = Math.sqrt(-Math.log(r));
+    const result = (q < 0 ? -1 : 1) * (t - ((2.515517 + 0.802853 * t + 0.010328 * t * t) /
+                   (1 + 1.432788 * t + 0.189269 * t * t + 0.001308 * t * t * t)));
+    
+    return result;
+  };
+
+  const handleBackToMenu = () => {
+    router.push('/cognitive-tests');
+  };
+
+  const handlePlayAgain = () => {
+    startGame();
+  };
+
+  useEffect(() => {
+    const checkTestStatus = async () => {
+      try {
+        const activeSession = await isUserInActiveTestSession();
+        if (activeSession.isActive && activeSession.activeTest?.test_type !== 'n_back') {
+          setActiveTestSession(activeSession);
+        }
+        
+        const relevantTest = await getRelevantScheduledTest('n_back');
+        if (relevantTest) {
+          setScheduledTest(relevantTest);
+          const context = await getTestContext(relevantTest.id);
+          setStudyContext(context);
+        }
+      } catch (error) {
+        console.error('Failed to check for scheduled test:', error);
+      }
+    };
+    
+    checkTestStatus();
+  }, []);
+
+  if (gameState === 'ready') {
+    return (
+      <ThemedView style={styles.container} safeArea>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <ThemedView style={styles.instructionsContainer}>
+            <ThemedText type="title" style={styles.title}>N-Back Test</ThemedText>
+            {scheduledTest && studyContext?.supplement_name && (
+              <ThemedView style={[styles.studyBanner, { backgroundColor: tintColor + '20', borderColor: tintColor }]}>
+                <ThemedText style={[styles.studyText, { color: tintColor }]}>
+                  📊 Study Test for {studyContext.supplement_name}
+                </ThemedText>
+              </ThemedView>
+            )}
+            {activeTestSession && (
+              <ThemedView style={[styles.warningBanner, { backgroundColor: '#FF3B30' + '20', borderColor: '#FF3B30' }]}>
+                <ThemedText style={[styles.warningText, { color: '#FF3B30' }]}>
+                  ⚠️ Active {activeTestSession.activeTest?.test_type} test ({Math.ceil(activeTestSession.timeRemaining || 0)}s remaining)
+                </ThemedText>
+              </ThemedView>
+            )}
+            <ThemedText style={styles.instructions}>
+              Working memory test - scientifically validated!{'\n\n'}
+              • You&apos;ll see a sequence of shapes{'\n'}
+              • Tap a button to advance to the next shape{'\n'}
+              • Tap &quot;MATCH&quot; if current shape matches the one from 2 steps back{'\n'}
+              • Tap &quot;NO MATCH&quot; if it doesn&apos;t match{'\n'}
+              • 20 trials total{'\n'}
+              • Focus and respond quickly!
+            </ThemedText>
+            <TouchableOpacity 
+              style={[styles.startButton, { backgroundColor: tintColor }]} 
+              onPress={startGame}
+            >
+              <ThemedText style={styles.startButtonText}>Start Test</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+              <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
+            </TouchableOpacity>
+          </ThemedView>
+        </ScrollView>
+      </ThemedView>
+    );
+  }
+
+  if (gameState === 'instructions') {
+    return (
+      <ThemedView style={styles.container} safeArea>
+        <ThemedView style={styles.countdownContainer}>
+          <ThemedText style={styles.reminderText}>
+            Remember: Match if current shape = shape from 2 steps back
+          </ThemedText>
+        </ThemedView>
+      </ThemedView>
+    );
+  }
+
+  if (gameState === 'finished') {
+    const completedTrials = trials.filter(t => t.userResponse !== null);
+    const matches = trials.filter(t => t.isMatch);
+    const hits = trials.filter(t => t.isMatch && t.userResponse === true);
+    const misses = trials.filter(t => t.isMatch && t.userResponse === false);
+    const falseAlarms = trials.filter(t => !t.isMatch && t.userResponse === true);
+    const correctRejections = trials.filter(t => !t.isMatch && t.userResponse === false);
+    
+    const accuracy = (hits.length + correctRejections.length) / TRIAL_COUNT;
+    
+    const averageResponseTime = completedTrials.length > 0 
+      ? completedTrials.reduce((sum, t) => sum + (t.responseTime || 0), 0) / completedTrials.length 
+      : 0;
+    
+    const hitResponseTimes = hits.filter(h => h.responseTime !== null);
+    const averageHitResponseTime = hitResponseTimes.length > 0
+      ? hitResponseTimes.reduce((sum, h) => sum + h.responseTime!, 0) / hitResponseTimes.length
+      : 0;
+    
+    return (
+      <ThemedView style={styles.container} safeArea>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <ThemedView style={styles.resultsContainer}>
+            <ThemedText type="title" style={styles.title}>Test Complete!</ThemedText>
+            <ThemedText style={styles.finalScore}>Accuracy: {(accuracy * 100).toFixed(1)}%</ThemedText>
+            <ThemedText style={styles.metricText}>Hits: {hits.length}/{matches.length}</ThemedText>
+            <ThemedText style={styles.metricText}>Misses: {misses.length}</ThemedText>
+            <ThemedText style={styles.metricText}>False Alarms: {falseAlarms.length}</ThemedText>
+            <ThemedText style={styles.metricText}>Correct Rejections: {correctRejections.length}</ThemedText>
+            <ThemedText style={styles.metricText}>Avg Response Time: {averageResponseTime.toFixed(0)}ms</ThemedText>
+            {averageHitResponseTime > 0 && (
+              <ThemedText style={styles.metricText}>Avg Hit Response Time: {averageHitResponseTime.toFixed(0)}ms</ThemedText>
+            )}
+            <ThemedText style={styles.resultMessage}>
+              {accuracy >= 0.8 ? 'Excellent working memory!' : 
+               accuracy >= 0.65 ? 'Good cognitive performance!' : 
+               accuracy >= 0.5 ? 'Fair performance!' : 'Keep practicing!'}
+            </ThemedText>
+            <TouchableOpacity 
+              style={[styles.startButton, { backgroundColor: tintColor }]} 
+              onPress={handlePlayAgain}
+            >
+              <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+              <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
+            </TouchableOpacity>
+          </ThemedView>
+        </ScrollView>
+      </ThemedView>
+    );
+  }
+
+  return (
+    <ThemedView style={styles.container} safeArea>
+      <ThemedView style={styles.gameHeader}>
+        <ThemedText style={styles.trialText}>Trial: {currentTrial + 1}/20</ThemedText>
+        <ThemedText style={styles.instructionText}>2-Back Test</ThemedText>
+      </ThemedView>
+
+      <View style={styles.stimulusArea}>
+        {showingStimulus && currentShape && (
+          <View style={styles.shapeContainer}>
+            <ThemedText style={[styles.shape, { color: tintColor }]}>
+              {SHAPES.find(s => s.id === currentShape)?.symbol || '?'}
+            </ThemedText>
+          </View>
+        )}
+      </View>
+
+      <ThemedView style={styles.responseArea}>
+        <TouchableOpacity 
+          style={[styles.responseButton, styles.noMatchButton, { borderColor: '#FF3B30' }]}
+          onPress={() => handleResponse(false)}
+        >
+          <ThemedText style={[styles.responseButtonText, { color: '#FF3B30' }]}>NO MATCH</ThemedText>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.responseButton, styles.matchButton, { borderColor: '#34C759' }]}
+          onPress={() => handleResponse(true)}
+        >
+          <ThemedText style={[styles.responseButtonText, { color: '#34C759' }]}>MATCH</ThemedText>
+        </TouchableOpacity>
+      </ThemedView>
+
+      <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+        <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
+      </TouchableOpacity>
+    </ThemedView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    padding: 20,
+    paddingTop: 40,
+    paddingBottom: 60,
+    minHeight: screenHeight,
+  },
+  instructionsContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  resultsContainer: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 80,
+    paddingBottom: 60,
+    paddingHorizontal: 20,
+  },
+  countdownContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 40,
+  },
+  title: {
+    fontSize: 26,
+    fontWeight: 'bold',
+    marginBottom: 30,
+    marginTop: 20,
+    textAlign: 'center',
+    lineHeight: 32,
+  },
+  instructions: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 40,
+    lineHeight: 24,
+  },
+  startButton: {
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  startButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  backButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  backButtonText: {
+    fontSize: 16,
+    opacity: 0.7,
+  },
+  countdownText: {
+    fontSize: 72,
+    fontWeight: 'bold',
+    marginVertical: 30,
+  },
+  reminderText: {
+    fontSize: 16,
+    textAlign: 'center',
+    opacity: 0.8,
+    lineHeight: 24,
+  },
+  gameHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 100,
+    paddingBottom: 20,
+  },
+  trialText: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  instructionText: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  stimulusArea: {
+    flex: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginVertical: 20,
+    minHeight: 350,
+    paddingHorizontal: 20,
+  },
+  shapeContainer: {
+    width: SHAPE_SIZE,
+    height: SHAPE_SIZE,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderRadius: 16,
+    borderWidth: 3,
+    borderColor: 'rgba(0,0,0,0.15)',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  shape: {
+    fontSize: Math.min(140, SHAPE_SIZE * 0.55),
+    textAlign: 'center',
+    lineHeight: Math.min(140, SHAPE_SIZE * 0.55),
+  },
+  responseArea: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingHorizontal: 20,
+    marginBottom: 40,
+  },
+  responseButton: {
+    paddingVertical: 20,
+    paddingHorizontal: 30,
+    borderRadius: 12,
+    borderWidth: 2,
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  matchButton: {
+    backgroundColor: 'transparent',
+  },
+  noMatchButton: {
+    backgroundColor: 'transparent',
+  },
+  responseButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  finalScore: {
+    fontSize: 26,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    marginTop: 20,
+    textAlign: 'center',
+    lineHeight: 32,
+  },
+  metricText: {
+    fontSize: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  resultMessage: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 30,
+    marginTop: 20,
+    opacity: 0.8,
+    lineHeight: 24,
+  },
+  studyBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  studyText: {
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  warningBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  warningText: {
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+});

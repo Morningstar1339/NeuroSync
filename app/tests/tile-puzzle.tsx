@@ -1,0 +1,604 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { StyleSheet, TouchableOpacity, View, Dimensions, Alert, ScrollView } from 'react-native';
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { useRouter } from 'expo-router';
+import { useThemeColor } from '@/hooks/use-theme-color';
+import { saveCognitiveTestResult } from '@/database/cognitive-tests';
+import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
+
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+const GRID_SIZE = 3;
+const TILE_SIZE = (screenWidth - 80) / GRID_SIZE;
+
+type PuzzleState = (number | null)[][];
+
+export default function TilePuzzleTestScreen() {
+  const router = useRouter();
+  const tintColor = useThemeColor({}, 'tint');
+  
+  const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
+  const [puzzle, setPuzzle] = useState<PuzzleState>([]);
+  const [moves, setMoves] = useState(0);
+  const [optimalMoves, setOptimalMoves] = useState(0);
+  const [scheduledTest, setScheduledTest] = useState<any>(null);
+  const [studyContext, setStudyContext] = useState<any>(null);
+  const [activeTestSession, setActiveTestSession] = useState<any>(null);
+  const [isGiveUpPressed, setIsGiveUpPressed] = useState(false);
+  const [completionTime, setCompletionTime] = useState<number>(0);
+  
+  const startTime = useRef<number>(0);
+
+  const createSolvedPuzzle = (): PuzzleState => {
+    const solved: PuzzleState = [];
+    let num = 1;
+    for (let i = 0; i < GRID_SIZE; i++) {
+      solved[i] = [];
+      for (let j = 0; j < GRID_SIZE; j++) {
+        if (i === GRID_SIZE - 1 && j === GRID_SIZE - 1) {
+          solved[i][j] = null; // Empty space
+        } else {
+          solved[i][j] = num++;
+        }
+      }
+    }
+    return solved;
+  };
+
+  const isSolvable = (puzzle: PuzzleState): boolean => {
+    const flattened = puzzle.flat().filter(num => num !== null) as number[];
+    let inversions = 0;
+    
+    for (let i = 0; i < flattened.length - 1; i++) {
+      for (let j = i + 1; j < flattened.length; j++) {
+        if (flattened[i] > flattened[j]) {
+          inversions++;
+        }
+      }
+    }
+    
+    return inversions % 2 === 0;
+  };
+
+  const shufflePuzzle = (): PuzzleState => {
+    let shuffled: PuzzleState;
+    do {
+      const solved = createSolvedPuzzle();
+      const flattened = solved.flat();
+      
+      // Fisher-Yates shuffle
+      for (let i = flattened.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [flattened[i], flattened[j]] = [flattened[j], flattened[i]];
+      }
+      
+      shuffled = [];
+      for (let i = 0; i < GRID_SIZE; i++) {
+        shuffled[i] = flattened.slice(i * GRID_SIZE, (i + 1) * GRID_SIZE);
+      }
+    } while (!isSolvable(shuffled) || isPuzzleSolved(shuffled));
+    
+    return shuffled;
+  };
+
+  const isPuzzleSolved = (currentPuzzle: PuzzleState): boolean => {
+    const solved = createSolvedPuzzle();
+    for (let i = 0; i < GRID_SIZE; i++) {
+      for (let j = 0; j < GRID_SIZE; j++) {
+        if (currentPuzzle[i][j] !== solved[i][j]) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+
+  const findEmptySpace = (currentPuzzle: PuzzleState): [number, number] => {
+    for (let i = 0; i < GRID_SIZE; i++) {
+      for (let j = 0; j < GRID_SIZE; j++) {
+        if (currentPuzzle[i][j] === null) {
+          return [i, j];
+        }
+      }
+    }
+    return [-1, -1];
+  };
+
+  const canMoveTile = (row: number, col: number, currentPuzzle: PuzzleState): boolean => {
+    const [emptyRow, emptyCol] = findEmptySpace(currentPuzzle);
+    const rowDiff = Math.abs(row - emptyRow);
+    const colDiff = Math.abs(col - emptyCol);
+    return (rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1);
+  };
+
+  const moveTile = (row: number, col: number) => {
+    if (!canMoveTile(row, col, puzzle)) return;
+    
+    const newPuzzle = puzzle.map(r => [...r]);
+    const [emptyRow, emptyCol] = findEmptySpace(newPuzzle);
+    
+    newPuzzle[emptyRow][emptyCol] = newPuzzle[row][col];
+    newPuzzle[row][col] = null;
+    
+    setPuzzle(newPuzzle);
+    setMoves(prev => prev + 1);
+    
+    if (isPuzzleSolved(newPuzzle)) {
+      endGame(true);
+    }
+  };
+
+  const calculateOptimalMoves = (initialPuzzle: PuzzleState): number => {
+    // Simplified heuristic: Manhattan distance of all tiles to their goal positions
+    const solved = createSolvedPuzzle();
+    const goalPositions: { [key: number]: [number, number] } = {};
+    
+    for (let i = 0; i < GRID_SIZE; i++) {
+      for (let j = 0; j < GRID_SIZE; j++) {
+        if (solved[i][j] !== null) {
+          goalPositions[solved[i][j] as number] = [i, j];
+        }
+      }
+    }
+    
+    let totalDistance = 0;
+    for (let i = 0; i < GRID_SIZE; i++) {
+      for (let j = 0; j < GRID_SIZE; j++) {
+        const tile = initialPuzzle[i][j];
+        if (tile !== null && goalPositions[tile]) {
+          const [goalRow, goalCol] = goalPositions[tile];
+          totalDistance += Math.abs(i - goalRow) + Math.abs(j - goalCol);
+        }
+      }
+    }
+    
+    return Math.max(1, Math.floor(totalDistance / 2));
+  };
+
+  const startGame = async () => {
+    try {
+      const activeSession = await isUserInActiveTestSession();
+      if (activeSession.isActive && activeSession.activeTest?.test_type !== 'tile_puzzle') {
+        Alert.alert(
+          'Test Session Active',
+          `You have an active ${activeSession.activeTest?.test_type} test (${Math.ceil(activeSession.timeRemaining || 0)}s remaining). Starting another test may affect your results.\n\nContinue anyway?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Continue', onPress: () => startGameNow() }
+          ]
+        );
+        return;
+      }
+    } catch (error) {
+      console.error('Failed to check active session:', error);
+    }
+    
+    startGameNow();
+  };
+
+  const startGameNow = () => {
+    const newPuzzle = shufflePuzzle();
+    const optimal = calculateOptimalMoves(newPuzzle);
+    
+    setGameState('playing');
+    setPuzzle(newPuzzle);
+    setMoves(0);
+    setOptimalMoves(optimal);
+    setIsGiveUpPressed(false);
+    setCompletionTime(0);
+    startTime.current = Date.now();
+  };
+
+  const endGame = async (solved: boolean) => {
+    setGameState('finished');
+    
+    // Always calculate completion time (whether solved or gave up)
+    const finalCompletionTime = (Date.now() - startTime.current) / 1000;
+    setCompletionTime(finalCompletionTime);
+    
+    const efficiency = solved && moves > 0 ? optimalMoves / moves : 0;
+    
+    const rawData = {
+      completion_time: finalCompletionTime, // Always track time
+      total_moves: moves,
+      optimal_moves: optimalMoves,
+      gave_up: !solved,
+      solved,
+      efficiency
+    };
+    
+    try {
+      const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
+      const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
+      
+      const score = solved ? Math.floor(efficiency * 100) : 0;
+      await saveCognitiveTestResult('tile_puzzle', score, rawData, finalCompletionTime, studyId, supplementLogId);
+      
+      if (scheduledTest) {
+        await completeScheduledTest(scheduledTest.id);
+      }
+    } catch (error) {
+      console.error('Failed to save tile puzzle test result:', error);
+    }
+  };
+
+  const handleGiveUp = () => {
+    Alert.alert(
+      'Give Up?',
+      'Are you sure you want to give up on this puzzle?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Give Up', style: 'destructive', onPress: () => {
+          setIsGiveUpPressed(true);
+          endGame(false);
+        }}
+      ]
+    );
+  };
+
+  const handleBackToMenu = () => {
+    router.push('/cognitive-tests');
+  };
+
+  const handlePlayAgain = () => {
+    startGame();
+  };
+
+  useEffect(() => {
+    const checkTestStatus = async () => {
+      try {
+        const activeSession = await isUserInActiveTestSession();
+        if (activeSession.isActive && activeSession.activeTest?.test_type !== 'tile_puzzle') {
+          setActiveTestSession(activeSession);
+        }
+        
+        const relevantTest = await getRelevantScheduledTest('tile_puzzle');
+        if (relevantTest) {
+          setScheduledTest(relevantTest);
+          const context = await getTestContext(relevantTest.id);
+          setStudyContext(context);
+        }
+      } catch (error) {
+        console.error('Failed to check for scheduled test:', error);
+      }
+    };
+    
+    checkTestStatus();
+  }, []);
+
+  if (gameState === 'ready') {
+    return (
+      <ThemedView style={styles.container} safeArea>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <ThemedView style={styles.instructionsContainer}>
+            <ThemedText type="title" style={styles.title}>8-Tile Puzzle</ThemedText>
+            {scheduledTest && studyContext?.supplement_name && (
+              <ThemedView style={[styles.studyBanner, { backgroundColor: tintColor + '20', borderColor: tintColor }]}>
+                <ThemedText style={[styles.studyText, { color: tintColor }]}>
+                  📊 Study Test for {studyContext.supplement_name}
+                </ThemedText>
+              </ThemedView>
+            )}
+            {activeTestSession && (
+              <ThemedView style={[styles.warningBanner, { backgroundColor: '#FF3B30' + '20', borderColor: '#FF3B30' }]}>
+                <ThemedText style={[styles.warningText, { color: '#FF3B30' }]}>
+                  ⚠️ Active {activeTestSession.activeTest?.test_type} test ({Math.ceil(activeTestSession.timeRemaining || 0)}s remaining)
+                </ThemedText>
+              </ThemedView>
+            )}
+            <ThemedText style={styles.instructions}>
+              Arrange the numbered tiles in order!{'\n\n'}
+              • Tap tiles adjacent to empty space to move them{'\n'}
+              • Goal: arrange numbers 1-8 in order{'\n'}
+              • Empty space should be bottom-right{'\n'}
+              • Try to solve in as few moves as possible
+            </ThemedText>
+            <TouchableOpacity 
+              style={[styles.startButton, { backgroundColor: tintColor }]} 
+              onPress={startGame}
+            >
+              <ThemedText style={styles.startButtonText}>Start Test</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+              <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
+            </TouchableOpacity>
+          </ThemedView>
+        </ScrollView>
+      </ThemedView>
+    );
+  }
+
+  if (gameState === 'finished') {
+    const efficiency = moves > 0 ? (optimalMoves / moves) * 100 : 0;
+    const wasSolved = !isGiveUpPressed && isPuzzleSolved(puzzle);
+    
+    return (
+      <ThemedView style={styles.container} safeArea>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <ThemedView style={styles.resultsContainer}>
+            <ThemedText type="title" style={styles.title}>
+              {wasSolved ? 'Puzzle Solved!' : 'Game Over'}
+            </ThemedText>
+            <ThemedText style={styles.metricText}>Completion Time: {completionTime.toFixed(1)}s</ThemedText>
+            <ThemedText style={styles.metricText}>Total Moves: {moves}</ThemedText>
+            <ThemedText style={styles.metricText}>Optimal Moves: {optimalMoves}</ThemedText>
+            {wasSolved && (
+              <ThemedText style={styles.metricText}>Efficiency: {efficiency.toFixed(1)}%</ThemedText>
+            )}
+            <ThemedText style={styles.resultMessage}>
+              {wasSolved && efficiency >= 80 ? 'Outstanding spatial reasoning!' : 
+               wasSolved && efficiency >= 60 ? 'Great problem solving!' : 
+               wasSolved ? 'Good work!' : 'Keep practicing!'}
+            </ThemedText>
+            <TouchableOpacity 
+              style={[styles.startButton, { backgroundColor: tintColor }]} 
+              onPress={handlePlayAgain}
+            >
+              <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+              <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
+            </TouchableOpacity>
+          </ThemedView>
+        </ScrollView>
+      </ThemedView>
+    );
+  }
+
+  return (
+    <ThemedView style={styles.container} safeArea>
+      <ThemedView style={styles.gameHeader}>
+        <ThemedText style={styles.movesText}>Moves: {moves}</ThemedText>
+        <ThemedText style={styles.optimalText}>Optimal: {optimalMoves}</ThemedText>
+      </ThemedView>
+
+      <View style={styles.puzzleContainer}>
+        {puzzle.map((row, rowIndex) =>
+          row.map((tile, colIndex) => (
+            <TouchableOpacity
+              key={`${rowIndex}-${colIndex}`}
+              style={[
+                styles.tile,
+                {
+                  backgroundColor: tile === null ? 'transparent' : tintColor,
+                  borderColor: tile === null ? 'transparent' : '#ccc',
+                }
+              ]}
+              onPress={() => moveTile(rowIndex, colIndex)}
+              disabled={!canMoveTile(rowIndex, colIndex, puzzle)}
+            >
+              {tile !== null && (
+                <ThemedText style={styles.tileText}>{tile}</ThemedText>
+              )}
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
+
+      <ThemedView style={styles.goalContainer}>
+        <ThemedText style={styles.goalTitle}>Goal:</ThemedText>
+        <View style={styles.goalGrid}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, null].map((num, index) => (
+            <View
+              key={index}
+              style={[
+                styles.goalTile,
+                { backgroundColor: num === null ? 'transparent' : '#ccc' }
+              ]}
+            >
+              {num !== null && (
+                <ThemedText style={styles.goalTileText}>{num}</ThemedText>
+              )}
+            </View>
+          ))}
+        </View>
+      </ThemedView>
+
+      <TouchableOpacity 
+        style={[styles.giveUpButton, { borderColor: '#FF3B30' }]} 
+        onPress={handleGiveUp}
+      >
+        <ThemedText style={[styles.giveUpButtonText, { color: '#FF3B30' }]}>Give Up</ThemedText>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+        <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
+      </TouchableOpacity>
+    </ThemedView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    padding: 20,
+    paddingTop: 40,
+    paddingBottom: 60,
+    minHeight: screenHeight,
+  },
+  instructionsContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  resultsContainer: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 80,
+    paddingBottom: 60,
+    paddingHorizontal: 20,
+  },
+  title: {
+    fontSize: 26,
+    fontWeight: 'bold',
+    marginBottom: 30,
+    marginTop: 20,
+    textAlign: 'center',
+    lineHeight: 32,
+  },
+  instructions: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 40,
+    lineHeight: 24,
+  },
+  startButton: {
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  startButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  backButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  backButtonText: {
+    fontSize: 16,
+    opacity: 0.7,
+  },
+  gameHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 100,
+    paddingBottom: 20,
+  },
+  movesText: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  optimalText: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  puzzleContainer: {
+    width: TILE_SIZE * GRID_SIZE + 20,
+    height: TILE_SIZE * GRID_SIZE + 20,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    backgroundColor: '#333',
+    padding: 10,
+    borderRadius: 10,
+    marginBottom: 30,
+  },
+  tile: {
+    width: TILE_SIZE - 10,
+    height: TILE_SIZE - 10,
+    margin: 5,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+  },
+  tileText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: 'white',
+  },
+  goalContainer: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  goalTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  goalGrid: {
+    width: 120,
+    height: 120,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    backgroundColor: '#f0f0f0',
+    padding: 5,
+    borderRadius: 5,
+  },
+  goalTile: {
+    width: 30,
+    height: 30,
+    margin: 2.5,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 3,
+  },
+  goalTileText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: 'black',
+  },
+  giveUpButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+    borderWidth: 2,
+    alignItems: 'center',
+    marginBottom: 20,
+    alignSelf: 'center',
+  },
+  giveUpButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  finalScore: {
+    fontSize: 26,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    marginTop: 20,
+    textAlign: 'center',
+    lineHeight: 32,
+  },
+  metricText: {
+    fontSize: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  resultMessage: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 30,
+    marginTop: 20,
+    opacity: 0.8,
+    lineHeight: 24,
+  },
+  studyBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  studyText: {
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  warningBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  warningText: {
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+});
