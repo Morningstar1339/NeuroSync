@@ -387,11 +387,19 @@ export class NotificationManager {
     console.log('Cleaning up NotificationManager...');
     
     if (this.notificationListener) {
-      Notifications.removeNotificationSubscription(this.notificationListener);
+      try {
+        this.notificationListener.remove();
+      } catch (error) {
+        console.warn('Failed to remove notification listener:', error);
+      }
     }
     
     if (this.responseListener) {
-      Notifications.removeNotificationSubscription(this.responseListener);
+      try {
+        this.responseListener.remove();
+      } catch (error) {
+        console.warn('Failed to remove response listener:', error);
+      }
     }
     
     if (this.appStateSubscription) {

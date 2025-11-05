@@ -1,13 +1,46 @@
 import * as SQLite from 'expo-sqlite';
+import { logDatabaseAccess } from '../utils/database-tracker';
 
 const DATABASE_NAME = 'neurosync.db';
 
-// Global state tracking
-let databaseInstance: SQLite.SQLiteDatabase | null = null;
+// Global state tracking with extra protection
+let _databaseInstance: SQLite.SQLiteDatabase | null = null;
 let isDatabaseReady = false;
 let isInitializing = false;
 let fallbackMode = false;
 let fallbackData: { [key: string]: any[] } = {};
+
+// Backup reference to prevent accidental loss
+let _databaseInstanceBackup: SQLite.SQLiteDatabase | null = null;
+
+// Tracked getter for database instance
+function getDatabaseInstance(): SQLite.SQLiteDatabase | null {
+  logDatabaseAccess('GET_DATABASE_INSTANCE', _databaseInstance, _databaseInstance);
+  return _databaseInstance;
+}
+
+// Tracked setter for database instance
+function setDatabaseInstance(db: SQLite.SQLiteDatabase | null, reason: string): void {
+  const previousState = _databaseInstance;
+  logDatabaseAccess(`SET_DATABASE_INSTANCE: ${reason}`, _databaseInstance, db);
+  logInfo('setDatabaseInstance', `Setting database instance from ${previousState ? 'existing' : 'null'} to ${db ? 'new instance' : 'null'} - reason: ${reason}`);
+  
+  // If setting to null but we have a backup and no good reason, prevent it
+  if (!db && _databaseInstanceBackup && reason !== 'explicit_reset' && reason !== 'initialization_failed') {
+    logError('setDatabaseInstance', `Attempted to set database instance to null for reason: ${reason}. Keeping backup instance instead.`);
+    _databaseInstance = _databaseInstanceBackup;
+    logDatabaseAccess('RESTORE_FROM_BACKUP', null, _databaseInstance);
+    return;
+  }
+  
+  _databaseInstance = db;
+  
+  // Store backup when setting a valid instance
+  if (db) {
+    _databaseInstanceBackup = db;
+    logInfo('setDatabaseInstance', 'Database instance backup created');
+  }
+}
 
 // Detailed error logging
 const logError = (operation: string, error: any) => {
@@ -23,8 +56,27 @@ const logInfo = (operation: string, message: string) => {
 };
 
 // Database ready flag for external components to check
-export const isDatabaseInitialized = () => isDatabaseReady;
+export const isDatabaseInitialized = () => {
+  // Double-check: if we say we're ready but have no instance, we're not really ready
+  if (isDatabaseReady && !getDatabaseInstance()) {
+    logError('isDatabaseInitialized', 'Database marked as ready but instance is null - correcting status');
+    isDatabaseReady = false;
+    return false;
+  }
+  return isDatabaseReady;
+};
 export const isFallbackMode = () => fallbackMode;
+
+// Additional diagnostic function
+export const getDatabaseInstanceStatus = () => {
+  return {
+    hasInstance: !!getDatabaseInstance(),
+    hasBackup: !!_databaseInstanceBackup,
+    isReady: isDatabaseReady,
+    isFallback: fallbackMode,
+    canRecover: !getDatabaseInstance() && !!_databaseInstanceBackup
+  };
+};
 
 // Comprehensive null checks before any database operation
 const validateDatabaseState = (): boolean => {
@@ -33,31 +85,211 @@ const validateDatabaseState = (): boolean => {
     return false;
   }
   
-  if (!databaseInstance) {
-    logError('validateDatabaseState', 'Database instance is null');
+  if (!getDatabaseInstance()) {
+    logError('validateDatabaseState', `Database instance is null - ready flag: ${isDatabaseReady}, fallback: ${fallbackMode}`);
+    
+    // If we're supposed to be ready but instance is null, this is a critical bug
+    if (isDatabaseReady && !fallbackMode) {
+      logError('validateDatabaseState', 'CRITICAL BUG: Database marked as ready but instance is null!');
+    }
+    
     return false;
   }
   
-  if (!(databaseInstance as any)._db) {
-    logError('validateDatabaseState', 'Database connection is not open');
+  // Additional validation: check if the instance is still a valid SQLite object
+  try {
+    const testResult = getDatabaseInstance()!.getFirstSync('SELECT 1 as test');
+    if ((testResult as any)?.test !== 1) {
+      logError('validateDatabaseState', 'Database instance exists but connection test failed');
+      return false;
+    }
+  } catch (error) {
+    logError('validateDatabaseState', `Database instance exists but is not functional: ${error}`);
     return false;
   }
   
   return true;
 };
 
-// Get database instance with validation
+// Health check function to verify database state
+export const checkDatabaseHealth = (): {
+  healthy: boolean;
+  issues: string[];
+  details: {
+    hasInstance: boolean;
+    isReady: boolean;
+    isFallback: boolean;
+    connectionTest: boolean;
+    tablesExist: boolean;
+  };
+} => {
+  const issues: string[] = [];
+  const details = {
+    hasInstance: !!getDatabaseInstance(),
+    isReady: isDatabaseReady,
+    isFallback: fallbackMode,
+    connectionTest: false,
+    tablesExist: false
+  };
+  
+  logInfo('checkDatabaseHealth', `Starting health check - hasInstance: ${details.hasInstance}, isReady: ${details.isReady}, isFallback: ${details.isFallback}`);
+  
+  // Check if we're in fallback mode
+  if (fallbackMode) {
+    issues.push('Database running in fallback memory-only mode');
+    return { healthy: false, issues, details };
+  }
+  
+  // Check if database instance exists
+  if (!getDatabaseInstance()) {
+    issues.push('Database instance is null');
+  }
+  
+  // Check ready flag consistency
+  if (isDatabaseReady && !getDatabaseInstance()) {
+    issues.push('Database marked as ready but instance is null (critical bug)');
+  }
+  
+  // Test database connection if instance exists
+  if (getDatabaseInstance()) {
+    try {
+      const testResult = getDatabaseInstance()!.getFirstSync('SELECT 1 as test');
+      if ((testResult as any)?.test === 1) {
+        details.connectionTest = true;
+        logInfo('checkDatabaseHealth', 'Database connection test passed');
+      } else {
+        issues.push('Database connection test failed - unexpected result');
+        logError('checkDatabaseHealth', `Connection test returned: ${JSON.stringify(testResult)}`);
+      }
+    } catch (error) {
+      issues.push(`Database connection test failed: ${error instanceof Error ? error.message : String(error)}`);
+      logError('checkDatabaseHealth', `Connection test error: ${error}`);
+    }
+  }
+  
+  // Check if required tables exist
+  if (getDatabaseInstance() && details.connectionTest) {
+    try {
+      const requiredTables = [
+        'supplements', 'supplement_logs', 'symptoms', 'symptom_logs',
+        'cognitive_test_results', 'sleep_logs', 'schedules', 'exclusions',
+        'study_protocols', 'scheduled_tests', 'notification_records', 'notification_settings'
+      ];
+      
+      const tables = getDatabaseInstance()!.getAllSync(`
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name NOT LIKE 'sqlite_%'
+        ORDER BY name
+      `);
+      
+      const tableNames = tables.map((table: any) => table.name);
+      const missingTables = requiredTables.filter(table => !tableNames.includes(table));
+      
+      if (missingTables.length === 0) {
+        details.tablesExist = true;
+        logInfo('checkDatabaseHealth', 'All required tables exist');
+      } else {
+        issues.push(`Missing required tables: ${missingTables.join(', ')}`);
+        logError('checkDatabaseHealth', `Missing tables: ${missingTables.join(', ')}`);
+      }
+    } catch (error) {
+      issues.push(`Failed to check table existence: ${error instanceof Error ? error.message : String(error)}`);
+      logError('checkDatabaseHealth', `Table check error: ${error}`);
+    }
+  }
+  
+  const healthy = issues.length === 0;
+  logInfo('checkDatabaseHealth', `Health check complete - healthy: ${healthy}, issues: ${issues.length}`);
+  
+  return { healthy, issues, details };
+};
+
+// Get database instance with validation and enhanced logging
 export const getDatabase = (): SQLite.SQLiteDatabase | null => {
+  const timestamp = new Date().toISOString();
+  const currentInstance = getDatabaseInstance();
+  const currentReady = isDatabaseReady;
+  const currentFallback = fallbackMode;
+  
+  logInfo('getDatabase', `[${timestamp}] Getting database instance - ready: ${currentReady}, fallback: ${currentFallback}, instance: ${currentInstance ? 'exists' : 'null'}`);
+  
   if (fallbackMode) {
     logInfo('getDatabase', 'Running in fallback mode - returning null');
     return null;
   }
   
-  if (!validateDatabaseState()) {
-    return null;
+  // Emergency reinitialization if database marked ready but instance is null
+  if (isDatabaseReady && !getDatabaseInstance()) {
+    logError('getDatabase', 'CRITICAL: Database marked as ready but instance is null! Attempting emergency recovery...');
+    
+    try {
+      logInfo('getDatabase', 'Step 1: Attempting emergency database reinitialization...');
+      const emergencyDb = openDatabase();
+      
+      logInfo('getDatabase', 'Step 2: Testing emergency database connection...');
+      const testResult = emergencyDb.getFirstSync('SELECT 1 as test');
+      if ((testResult as any)?.test !== 1) {
+        throw new Error('Emergency database connection test failed');
+      }
+      
+      logInfo('getDatabase', 'Step 3: Setting emergency database instance...');
+      setDatabaseInstance(emergencyDb, 'emergency_recovery');
+      
+      logInfo('getDatabase', '✅ Emergency reinitialization successful');
+      return emergencyDb;
+    } catch (error) {
+      logError('getDatabase', `❌ Emergency reinitialization failed: ${error}`);
+      isDatabaseReady = false;
+      
+      // Try to recover from backup if available
+      if (_databaseInstanceBackup) {
+        logInfo('getDatabase', 'Attempting recovery from backup instance...');
+        try {
+          const backupTest = _databaseInstanceBackup.getFirstSync('SELECT 1 as test');
+          if ((backupTest as any)?.test === 1) {
+            setDatabaseInstance(_databaseInstanceBackup, 'backup_recovery');
+            isDatabaseReady = true;
+            logInfo('getDatabase', '✅ Successfully recovered from backup instance');
+            return _databaseInstanceBackup;
+          }
+        } catch (backupError) {
+          logError('getDatabase', `Backup recovery failed: ${backupError}`);
+        }
+      }
+      
+      return null;
+    }
   }
   
-  return databaseInstance;
+  // Comprehensive validation with automatic recovery
+  if (!validateDatabaseState()) {
+    logError('getDatabase', 'Database state validation failed - attempting auto-recovery...');
+    
+    // Try to reopen database if validation fails
+    try {
+      logInfo('getDatabase', 'Attempting database auto-recovery...');
+      const recoveredDb = openDatabase();
+      
+      // Test the recovered database
+      const testResult = recoveredDb.getFirstSync('SELECT 1 as test');
+      if ((testResult as any)?.test !== 1) {
+        throw new Error('Recovered database connection test failed');
+      }
+      
+      setDatabaseInstance(recoveredDb, 'auto_recovery');
+      isDatabaseReady = true;
+      
+      logInfo('getDatabase', '✅ Database auto-recovery successful');
+      return recoveredDb;
+    } catch (error) {
+      logError('getDatabase', `❌ Database auto-recovery failed: ${error}`);
+      isDatabaseReady = false;
+      return null;
+    }
+  }
+  
+  logInfo('getDatabase', `✅ [${timestamp}] Returning valid database instance`);
+  return getDatabaseInstance();
 };
 
 // Safe database operations wrapper with fallback support
@@ -66,28 +298,56 @@ export const withDatabase = async <T>(
   operationName: string = 'database operation',
   fallbackOperation?: () => Promise<T>
 ): Promise<T> => {
+  const operationId = `${operationName}-${Date.now()}`;
+  const timestamp = new Date().toISOString();
+  
+  logInfo('withDatabase', `[${timestamp}] [${operationId}] Starting database operation: ${operationName}`);
+  
   try {
     if (fallbackMode && fallbackOperation) {
-      logInfo('withDatabase', `Using fallback for ${operationName}`);
-      return await fallbackOperation();
+      logInfo('withDatabase', `[${operationId}] Using fallback mode for ${operationName}`);
+      const result = await fallbackOperation();
+      logInfo('withDatabase', `[${operationId}] ✅ Fallback operation completed successfully`);
+      return result;
     }
     
+    logInfo('withDatabase', `[${operationId}] Getting database instance...`);
     const db = getDatabase();
     if (!db) {
+      logError('withDatabase', `[${operationId}] Database instance not available`);
+      
       if (fallbackOperation) {
-        logInfo('withDatabase', `Database unavailable, using fallback for ${operationName}`);
-        return await fallbackOperation();
+        logInfo('withDatabase', `[${operationId}] Database unavailable, using fallback for ${operationName}`);
+        const result = await fallbackOperation();
+        logInfo('withDatabase', `[${operationId}] ✅ Fallback operation completed successfully`);
+        return result;
       }
       throw new Error(`Database not available and no fallback provided for ${operationName}`);
     }
     
-    return await operation(db);
+    logInfo('withDatabase', `[${operationId}] ✅ Database instance obtained, executing operation...`);
+    const result = await operation(db);
+    logInfo('withDatabase', `[${operationId}] ✅ Database operation completed successfully: ${operationName}`);
+    return result;
+    
   } catch (error) {
-    logError('withDatabase', `${operationName}: ${error}`);
+    logError('withDatabase', `[${operationId}] ❌ Operation failed: ${operationName}`);
+    logError('withDatabase', `[${operationId}] Error details:`);
+    logError('withDatabase', `[${operationId}]   - Error name: ${error instanceof Error ? error.name : 'Unknown'}`);
+    logError('withDatabase', `[${operationId}]   - Error message: ${error instanceof Error ? error.message : String(error)}`);
+    logError('withDatabase', `[${operationId}]   - Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
     
     if (fallbackOperation) {
-      logInfo('withDatabase', `Database operation failed, using fallback for ${operationName}`);
-      return await fallbackOperation();
+      logInfo('withDatabase', `[${operationId}] Database operation failed, attempting fallback for ${operationName}`);
+      try {
+        const result = await fallbackOperation();
+        logInfo('withDatabase', `[${operationId}] ✅ Fallback operation completed successfully`);
+        return result;
+      } catch (fallbackError) {
+        logError('withDatabase', `[${operationId}] ❌ Fallback operation also failed:`);
+        logError('withDatabase', `[${operationId}]   - Fallback error: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+        throw new Error(`Both database and fallback operations failed for ${operationName}. Database error: ${error instanceof Error ? error.message : 'Unknown error'}. Fallback error: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`);
+      }
     }
     
     throw new Error(`Database operation failed: ${operationName}. ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -100,9 +360,9 @@ export const resetDatabase = async (): Promise<boolean> => {
     logInfo('resetDatabase', 'Starting database reset');
     
     // Close existing connection if any
-    if (databaseInstance) {
+    if (getDatabaseInstance()) {
       try {
-        await databaseInstance.closeAsync();
+        await getDatabaseInstance()!.closeAsync();
         logInfo('resetDatabase', 'Closed existing database connection');
       } catch (error) {
         logError('resetDatabase', `Failed to close database: ${error}`);
@@ -110,7 +370,7 @@ export const resetDatabase = async (): Promise<boolean> => {
     }
     
     // Reset state
-    databaseInstance = null;
+    setDatabaseInstance(null, 'database_reset');
     isDatabaseReady = false;
     isInitializing = false;
     fallbackMode = false;
@@ -128,27 +388,39 @@ export const resetDatabase = async (): Promise<boolean> => {
 
 export const openDatabase = (): SQLite.SQLiteDatabase => {
   try {
+    console.log('🔄 OPEN DB: STEP 2.1 - Loading SQLite module...');
     logInfo('openDatabase', 'Opening database connection synchronously');
     
     if (!SQLite) {
+      console.log('❌ OPEN DB: STEP 2.1 FAILED - SQLite module not available');
       throw new Error('SQLite module not available');
     }
+    console.log('✅ OPEN DB: STEP 2.1 COMPLETE - SQLite module loaded');
     
+    console.log(`🔄 OPEN DB: STEP 2.2 - Opening database with name: ${DATABASE_NAME}`);
+    console.log('🔄 OPEN DB: Using platform default storage location (works in both Expo Go and production)');
     const db = SQLite.openDatabaseSync(DATABASE_NAME);
     
     if (!db) {
+      console.log('❌ OPEN DB: STEP 2.2 FAILED - Failed to create database instance');
       throw new Error('Failed to create database instance');
     }
+    console.log('✅ OPEN DB: STEP 2.2 COMPLETE - Database instance created');
     
+    console.log('🔄 OPEN DB: STEP 2.3 - Testing database connection...');
     // Test the connection immediately
     const testResult = db.getFirstSync('SELECT 1 as test');
     if (!testResult || (testResult as any).test !== 1) {
+      console.log('❌ OPEN DB: STEP 2.3 FAILED - Database connection test failed');
       throw new Error('Database connection test failed');
     }
+    console.log('✅ OPEN DB: STEP 2.3 COMPLETE - Database connection test passed');
     
+    console.log('✅ OPEN DB: SUCCESS - Database connection opened and tested successfully');
     logInfo('openDatabase', 'Database connection opened and tested successfully');
     return db;
   } catch (error) {
+    console.log('❌ OPEN DB: FAILED - Database connection failed:', error);
     logError('openDatabase', error);
     throw new Error(`Database connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
@@ -156,9 +428,9 @@ export const openDatabase = (): SQLite.SQLiteDatabase => {
 
 export const initializeDatabase = (): SQLite.SQLiteDatabase => {
   // Return existing instance if already initialized
-  if (isDatabaseReady && databaseInstance && validateDatabaseState()) {
+  if (isDatabaseReady && getDatabaseInstance() && validateDatabaseState()) {
     logInfo('initializeDatabase', 'Database already initialized, returning existing instance');
-    return databaseInstance;
+    return getDatabaseInstance()!;
   }
   
   // Prevent concurrent initialization
@@ -176,50 +448,77 @@ export const initializeDatabase = (): SQLite.SQLiteDatabase => {
 };
 
 const performDatabaseInitialization = (): SQLite.SQLiteDatabase => {
+  console.log('🔄 DATABASE INIT: STEP 1 - Starting synchronous database initialization...');
   logInfo('performDatabaseInitialization', 'Starting synchronous database initialization');
   
   try {
+    console.log('🔄 DATABASE INIT: STEP 2 - Opening database connection...');
     // Open database connection synchronously
     const db = openDatabase();
+    console.log('✅ DATABASE INIT: STEP 2 COMPLETE - Database connection established');
     logInfo('performDatabaseInitialization', 'Database connection established');
     
+    console.log('🔄 DATABASE INIT: STEP 3 - Creating core tables...');
     // Create core tables synchronously
     createCoreTables(db);
+    console.log('✅ DATABASE INIT: STEP 3 COMPLETE - Core tables created');
     logInfo('performDatabaseInitialization', 'Core tables created');
     
+    console.log('🔄 DATABASE INIT: STEP 4 - Initializing notifications table...');
     // Initialize notifications table synchronously
     initializeNotificationsTableSync(db);
+    console.log('✅ DATABASE INIT: STEP 4 COMPLETE - Notifications table initialized');
     logInfo('performDatabaseInitialization', 'Notifications table initialized');
     
+    console.log('🔄 DATABASE INIT: STEP 5 - Initializing default symptoms...');
     // Initialize default symptoms synchronously
     initializeDefaultSymptomsSync(db);
+    console.log('✅ DATABASE INIT: STEP 5 COMPLETE - Default symptoms initialized');
     logInfo('performDatabaseInitialization', 'Default symptoms initialized');
     
+    console.log('🔄 DATABASE INIT: STEP 6 - Performing schema migrations...');
     // Perform schema migrations synchronously
     performSchemaMigrationsSync(db);
+    console.log('✅ DATABASE INIT: STEP 6 COMPLETE - Schema migrations completed');
     logInfo('performDatabaseInitialization', 'Schema migrations completed');
     
+    console.log('🔄 DATABASE INIT: STEP 7 - Verifying database integrity...');
     // Verify all tables exist and are accessible synchronously
     verifyDatabaseIntegritySync(db);
+    console.log('✅ DATABASE INIT: STEP 7 COMPLETE - Database integrity verified');
     logInfo('performDatabaseInitialization', 'Database integrity verified');
     
-    // Set global state
-    databaseInstance = db;
+    console.log('🔄 DATABASE INIT: STEP 8 - Setting global state...');
+    // Set global state with extra validation using protected setter
+    setDatabaseInstance(db, 'successful_initialization');
     isDatabaseReady = true;
     fallbackMode = false;
     
+    // Verify the instance was actually stored
+    if (getDatabaseInstance() !== db) {
+      throw new Error('Critical error: Failed to store database instance in global variable');
+    }
+    
+    console.log('✅ DATABASE INIT: STEP 8 COMPLETE - Global state set and verified');
+    logInfo('performDatabaseInitialization', `Database instance stored successfully - reference: ${getDatabaseInstance() ? 'valid' : 'null'}`);
+    
+    console.log('🎉 DATABASE INIT: SUCCESS - Database initialization completed successfully!');
     logInfo('performDatabaseInitialization', 'Database initialization completed successfully');
     return db;
     
   } catch (error) {
+    console.log('❌ DATABASE INIT: FAILED - Database initialization failed:', error);
     logError('performDatabaseInitialization', `Database initialization failed: ${error}`);
     
+    console.log('🔄 DATABASE INIT: CLEANUP - Resetting state on failure...');
     // Reset state on failure
     isDatabaseReady = false;
-    databaseInstance = null;
+    setDatabaseInstance(null, 'initialization_failed');
     
+    console.log('🔄 DATABASE INIT: FALLBACK - Enabling fallback mode...');
     // Enable fallback mode
     enableFallbackMode();
+    console.log('✅ DATABASE INIT: FALLBACK ENABLED - Fallback mode is now active');
     
     throw new Error(`Database initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
@@ -323,9 +622,11 @@ export const deleteFallbackData = (table: string, id: number): boolean => {
 };
 
 const createCoreTables = (db: SQLite.SQLiteDatabase): void => {
+  console.log('🔄 CREATE TABLES: STEP 3.1 - Starting core table creation...');
   logInfo('createCoreTables', 'Creating core database tables synchronously');
   
   try {
+    console.log('🔄 CREATE TABLES: STEP 3.2 - Setting database pragmas...');
     db.execSync(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
@@ -443,9 +744,12 @@ const createCoreTables = (db: SQLite.SQLiteDatabase): void => {
     CREATE INDEX IF NOT EXISTS idx_study_protocols_schedule_type ON study_protocols (schedule_type);
     CREATE INDEX IF NOT EXISTS idx_schedules_supplement_id ON schedules (supplement_id);
     `);
+    console.log('✅ CREATE TABLES: STEP 3.2 COMPLETE - Database tables and indexes created');
     
+    console.log('✅ CREATE TABLES: SUCCESS - Core database tables created successfully');
     logInfo('createCoreTables', 'Core database tables created successfully');
   } catch (error) {
+    console.log('❌ CREATE TABLES: FAILED - Core table creation failed:', error);
     logError('createCoreTables', error);
     throw error;
   }
@@ -607,13 +911,66 @@ const initializeDefaultSymptomsSync = (db: SQLite.SQLiteDatabase): void => {
 export const resetDatabaseState = (): void => {
   logInfo('resetDatabaseState', 'Resetting database state');
   isDatabaseReady = false;
-  databaseInstance = null;
+  setDatabaseInstance(null, 'explicit_reset');
+  _databaseInstanceBackup = null; // Clear backup too on explicit reset
   isInitializing = false;
   fallbackMode = false;
   fallbackData = {};
 };
 
-// Initialize database and handle errors gracefully
+// Initialize database with retry logic and exponential backoff
+export const initializeDatabaseWithRetry = async (maxRetries: number = 3): Promise<{ success: boolean; error?: string; attempts: number }> => {
+  let lastError: Error | undefined;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔄 DATABASE RETRY: Attempt ${attempt}/${maxRetries} - Starting database initialization...`);
+      
+      // Check permissions first
+      const permissions = await checkStoragePermissions();
+      if (!permissions.hasPermissions || !permissions.canWrite) {
+        throw new Error(`Storage permissions failed: ${permissions.error || 'Cannot write to storage'}`);
+      }
+      
+      // Check database path
+      const pathCheck = await checkDatabasePath();
+      if (!pathCheck.isWritable) {
+        throw new Error(`Database path not writable: ${pathCheck.error || 'Cannot write to database directory'}`);
+      }
+      
+      // Try to initialize database
+      initializeDatabase();
+      
+      console.log(`✅ DATABASE RETRY: SUCCESS on attempt ${attempt}/${maxRetries}`);
+      return { success: true, attempts: attempt };
+      
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.log(`❌ DATABASE RETRY: Attempt ${attempt}/${maxRetries} failed:`, lastError.message);
+      
+      if (attempt < maxRetries) {
+        // Exponential backoff: 100ms, 200ms, 400ms...
+        const delayMs = Math.pow(2, attempt - 1) * 100;
+        console.log(`🔄 DATABASE RETRY: Waiting ${delayMs}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        
+        // Reset state before retry
+        resetDatabaseState();
+      }
+    }
+  }
+  
+  console.log(`❌ DATABASE RETRY: All ${maxRetries} attempts failed. Enabling fallback mode.`);
+  enableFallbackMode();
+  
+  return { 
+    success: false, 
+    error: lastError?.message || 'Database initialization failed after retries',
+    attempts: maxRetries
+  };
+};
+
+// Initialize database and handle errors gracefully (kept for backward compatibility)
 export const initializeDatabaseSafely = (): { success: boolean; error?: string } => {
   try {
     initializeDatabase();
@@ -632,25 +989,176 @@ export const getDatabaseStatus = (): {
   ready: boolean;
   fallback: boolean;
   error?: string;
+  diagnostic?: any;
 } => {
+  const diagnostic = getDatabaseInstanceStatus();
+  
   if (fallbackMode) {
     return {
       ready: false,
       fallback: true,
-      error: 'Database failed to initialize - running in memory-only mode. Data will not persist.'
+      error: 'Database failed to initialize - running in memory-only mode. Data will not persist.',
+      diagnostic
     };
   }
   
-  if (isDatabaseReady && validateDatabaseState()) {
+  // Check if we can recover from a lost instance
+  if (diagnostic.canRecover) {
+    logInfo('getDatabaseStatus', 'Database instance lost but backup available - attempting recovery');
+    try {
+      setDatabaseInstance(_databaseInstanceBackup, 'backup_recovery');
+      logInfo('getDatabaseStatus', 'Successfully recovered database instance from backup');
+    } catch (error) {
+      logError('getDatabaseStatus', `Failed to recover from backup: ${error}`);
+    }
+  }
+  
+  if (isDatabaseInitialized() && validateDatabaseState()) {
     return {
       ready: true,
-      fallback: false
+      fallback: false,
+      diagnostic
     };
   }
   
   return {
     ready: false,
     fallback: false,
-    error: 'Database not initialized'
+    error: diagnostic.hasInstance ? 'Database instance invalid' : 'Database not initialized',
+    diagnostic
   };
+};
+
+// Check SQLite availability (simplified for Expo Go compatibility)
+export const checkStoragePermissions = async (): Promise<{
+  hasPermissions: boolean;
+  canWrite: boolean;
+  canCreateDirectory: boolean;
+  error?: string;
+}> => {
+  try {
+    console.log('🔄 PERMISSIONS: Checking SQLite availability...');
+    
+    // Test SQLite module availability
+    if (!SQLite) {
+      return {
+        hasPermissions: false,
+        canWrite: false,
+        canCreateDirectory: false,
+        error: 'SQLite module not available'
+      };
+    }
+    
+    console.log('✅ PERMISSIONS: SQLite module is available');
+    
+    // Test basic database creation and operations
+    try {
+      const testDb = SQLite.openDatabaseSync('permission_test.db');
+      testDb.execSync('CREATE TABLE IF NOT EXISTS test (id INTEGER, value TEXT)');
+      testDb.runSync('INSERT INTO test (id, value) VALUES (1, ?)', ['test']);
+      const result = testDb.getFirstSync('SELECT value FROM test WHERE id = 1');
+      const canWrite = (result as any)?.value === 'test';
+      testDb.execSync('DROP TABLE test');
+      await testDb.closeAsync();
+      
+      console.log(`✅ PERMISSIONS: SQLite write test ${canWrite ? 'PASSED' : 'FAILED'}`);
+      
+      return {
+        hasPermissions: true,
+        canWrite,
+        canCreateDirectory: true, // SQLite handles this automatically
+      };
+    } catch (dbError) {
+      console.log(`❌ PERMISSIONS: SQLite test failed: ${dbError}`);
+      return {
+        hasPermissions: true, // SQLite module exists
+        canWrite: false,
+        canCreateDirectory: false,
+        error: `SQLite test failed: ${dbError instanceof Error ? dbError.message : String(dbError)}`
+      };
+    }
+  } catch (error) {
+    console.log(`❌ PERMISSIONS: Permission check failed: ${error}`);
+    return {
+      hasPermissions: false,
+      canWrite: false,
+      canCreateDirectory: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+};
+
+// Get database name (platform handles storage location automatically)
+export const getDatabasePath = (): string => {
+  return `${DATABASE_NAME} (platform default storage)`;
+};
+
+// Check database status without file system access (Expo Go compatible)
+export const checkDatabasePath = async (): Promise<{
+  pathExists: boolean;
+  fileExists: boolean;
+  fileSize: number;
+  isWritable: boolean;
+  directoryExists: boolean;
+  fullPath: string;
+  error?: string;
+}> => {
+  try {
+    console.log('🔄 PATH CHECK: Checking database status (Expo Go compatible)...');
+    
+    const displayPath = getDatabasePath();
+    console.log(`🔄 PATH CHECK: Database: ${displayPath}`);
+    
+    // Test database accessibility through SQLite directly
+    let fileExists = false;
+    let isWritable = false;
+    
+    try {
+      const testDb = SQLite.openDatabaseSync(DATABASE_NAME);
+      
+      // Check if database has any tables (indicates it exists and has data)
+      const tables = testDb.getAllSync("SELECT name FROM sqlite_master WHERE type='table'");
+      fileExists = Array.isArray(tables) && tables.length > 0;
+      
+      // Test write capability
+      testDb.runSync('CREATE TABLE IF NOT EXISTS path_test (id INTEGER)');
+      testDb.runSync('INSERT OR REPLACE INTO path_test (id) VALUES (1)');
+      const result = testDb.getFirstSync('SELECT id FROM path_test WHERE id = 1');
+      isWritable = (result as any)?.id === 1;
+      testDb.runSync('DROP TABLE path_test');
+      
+      console.log(`✅ PATH CHECK: Database accessible: ${fileExists}, writable: ${isWritable}`);
+      
+      return {
+        pathExists: true,
+        fileExists,
+        fileSize: -1, // Cannot determine file size without FileSystem API
+        isWritable,
+        directoryExists: true, // SQLite handles this
+        fullPath: displayPath,
+      };
+    } catch (dbError) {
+      console.log(`❌ PATH CHECK: Database test failed: ${dbError}`);
+      return {
+        pathExists: true,
+        fileExists: false,
+        fileSize: 0,
+        isWritable: false,
+        directoryExists: true,
+        fullPath: displayPath,
+        error: `Database test failed: ${dbError instanceof Error ? dbError.message : String(dbError)}`
+      };
+    }
+  } catch (error) {
+    console.log(`❌ PATH CHECK: Path check failed: ${error}`);
+    return {
+      pathExists: false,
+      fileExists: false,
+      fileSize: 0,
+      isWritable: false,
+      directoryExists: false,
+      fullPath: getDatabasePath(),
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
 };

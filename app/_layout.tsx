@@ -3,11 +3,11 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity, Alert, AppState } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { initializeDatabase, isDatabaseInitialized, resetDatabaseState } from '@/database/database';
+import { initializeDatabase, isDatabaseInitialized, resetDatabaseState, initializeDatabaseWithRetry, checkDatabaseHealth } from '@/database/database';
 import { notificationManager } from '@/services/notification-manager';
 
 export const unstable_settings = {
@@ -26,21 +26,49 @@ export default function RootLayout() {
     initializeApp();
   }, []);
 
+  // React lifecycle logging
+  useEffect(() => {
+    console.log('🟢 APP MOUNTED');
+    return () => {
+      console.log('🔴 APP UNMOUNTING');
+    };
+  }, []);
+
+  // App state change logging
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      console.log('🔄 APP STATE CHANGED:', nextAppState);
+      // Check database state when app state changes
+      console.log('DB status after state change:', checkDatabaseHealth());
+    });
+    
+    return () => subscription.remove();
+  }, []);
+
+  // Memory pressure logging
+  useEffect(() => {
+    const subscription = AppState.addEventListener('memoryWarning', () => {
+      console.log('⚠️ MEMORY WARNING RECEIVED');
+      console.log('DB status during memory warning:', checkDatabaseHealth());
+    });
+    return () => subscription.remove();
+  }, []);
+
   const initializeApp = async () => {
     console.log('RootLayout: Starting app initialization...');
     setAppState('loading');
     setErrorMessage('');
 
     try {
-      // Step 1: Initialize database first and wait for completion
-      console.log('RootLayout: Initializing database...');
-      await initializeDatabase();
+      // Step 1: Initialize database with retry logic
+      console.log('RootLayout: Initializing database with retry logic...');
+      const dbResult = await initializeDatabaseWithRetry(3);
       
-      if (!isDatabaseInitialized()) {
-        throw new Error('Database initialization failed - database not ready after init');
+      if (!dbResult.success) {
+        throw new Error(`Database initialization failed after ${dbResult.attempts} attempts: ${dbResult.error}`);
       }
       
-      console.log('RootLayout: Database initialized successfully');
+      console.log(`RootLayout: Database initialized successfully on attempt ${dbResult.attempts}`);
 
       // Step 2: Initialize notification manager with database ready
       console.log('RootLayout: Initializing notification manager...');
@@ -173,6 +201,7 @@ export default function RootLayout() {
           <Stack.Screen name="tests/n-back" options={{ headerShown: false }} />
           <Stack.Screen name="tests/all-nine" options={{ headerShown: false }} />
           <Stack.Screen name="settings" options={{ headerShown: false }} />
+          <Stack.Screen name="database-debug" options={{ headerShown: false }} />
           <Stack.Screen name="sleep-logs" options={{ headerShown: false }} />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         </Stack>

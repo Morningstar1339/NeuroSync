@@ -1,4 +1,4 @@
-import { openDatabase } from './database';
+import { getDatabase, withDatabase } from './database';
 import { getAllStudyProtocols, StudyProtocol } from './supplements';
 
 export interface ScheduledTest {
@@ -20,100 +20,120 @@ export interface StudySession {
 
 // Initialize scheduled tests table (should be added to database schema)
 export const initializeStudyScheduler = async () => {
-  const db = await openDatabase();
-  await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS scheduled_tests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      study_protocol_id INTEGER NOT NULL,
-      supplement_log_id INTEGER,
-      test_type TEXT NOT NULL,
-      scheduled_time INTEGER NOT NULL,
-      completed INTEGER DEFAULT 0,
-      created_at INTEGER NOT NULL,
-      FOREIGN KEY (study_protocol_id) REFERENCES study_protocols (id),
-      FOREIGN KEY (supplement_log_id) REFERENCES supplement_logs (id)
-    );
-    
-    CREATE INDEX IF NOT EXISTS idx_scheduled_tests_time ON scheduled_tests (scheduled_time);
-    CREATE INDEX IF NOT EXISTS idx_scheduled_tests_completed ON scheduled_tests (completed);
-  `);
+  return await withDatabase(
+    async (db) => {
+      db.execSync(`
+        CREATE TABLE IF NOT EXISTS scheduled_tests (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          study_protocol_id INTEGER NOT NULL,
+          supplement_log_id INTEGER,
+          test_type TEXT NOT NULL,
+          scheduled_time INTEGER NOT NULL,
+          completed INTEGER DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (study_protocol_id) REFERENCES study_protocols (id),
+          FOREIGN KEY (supplement_log_id) REFERENCES supplement_logs (id)
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_scheduled_tests_time ON scheduled_tests (scheduled_time);
+        CREATE INDEX IF NOT EXISTS idx_scheduled_tests_completed ON scheduled_tests (completed);
+      `);
+    },
+    'initializeStudyScheduler'
+  );
 };
 
 // Schedule tests based on event-based study protocols when supplement is logged
 export const scheduleEventBasedTests = async (supplementId: number, supplementLogId: number): Promise<void> => {
-  const db = await openDatabase();
-  
-  // Get all event-based study protocols for this supplement
-  const protocols = await db.getAllAsync(
-    'SELECT * FROM study_protocols WHERE supplement_id = ? AND schedule_type = ?',
-    [supplementId, 'event_based']
-  ) as StudyProtocol[];
-  
-  const baseTime = Math.floor(Date.now() / 1000);
-  
-  for (const protocol of protocols) {
-    // Schedule tests at intervals for the duration
-    const numTests = Math.floor(protocol.duration_minutes / protocol.interval_minutes);
-    
-    for (let i = 0; i < numTests; i++) {
-      let scheduledTime = baseTime + (i * protocol.interval_minutes * 60);
+  return await withDatabase(
+    async (db) => {
+      // Get all event-based study protocols for this supplement
+      const protocols = db.getAllSync(
+        'SELECT * FROM study_protocols WHERE supplement_id = ? AND schedule_type = ?',
+        [supplementId, 'event_based']
+      ) as StudyProtocol[];
       
-      // Check for overlaps and adjust time if necessary
-      const overlapCheck = await checkForOverlappingTests(protocol.test_type, scheduledTime);
-      if (overlapCheck.hasOverlap) {
-        // Try to find a better time within a reasonable window (±30 minutes)
-        const suggestions = await suggestAlternativeTime(protocol.test_type, scheduledTime);
-        if (suggestions.length > 0) {
-          // Use the first suggestion that's within 30 minutes of the original time
-          const maxDeviation = 30 * 60; // 30 minutes in seconds
-          const goodSuggestion = suggestions.find(time => 
-            Math.abs(time - scheduledTime) <= maxDeviation
-          );
-          if (goodSuggestion) {
-            scheduledTime = goodSuggestion;
+      const baseTime = Math.floor(Date.now() / 1000);
+      
+      for (const protocol of protocols) {
+        // Schedule tests at intervals for the duration
+        const numTests = Math.floor(protocol.duration_minutes / protocol.interval_minutes);
+        
+        for (let i = 0; i < numTests; i++) {
+          let scheduledTime = baseTime + (i * protocol.interval_minutes * 60);
+          
+          // Check for overlaps and adjust time if necessary
+          const overlapCheck = await checkForOverlappingTests(protocol.test_type, scheduledTime);
+          if (overlapCheck.hasOverlap) {
+            // Try to find a better time within a reasonable window (±30 minutes)
+            const suggestions = await suggestAlternativeTime(protocol.test_type, scheduledTime);
+            if (suggestions.length > 0) {
+              // Use the first suggestion that's within 30 minutes of the original time
+              const maxDeviation = 30 * 60; // 30 minutes in seconds
+              const goodSuggestion = suggestions.find(time => 
+                Math.abs(time - scheduledTime) <= maxDeviation
+              );
+              if (goodSuggestion) {
+                scheduledTime = goodSuggestion;
+              }
+              // If no good suggestion found, keep original time (user will see overlap warning)
+            }
           }
-          // If no good suggestion found, keep original time (user will see overlap warning)
+          
+          db.runSync(
+            'INSERT INTO scheduled_tests (study_protocol_id, supplement_log_id, test_type, scheduled_time, created_at) VALUES (?, ?, ?, ?, ?)',
+            [protocol.id, supplementLogId, protocol.test_type, scheduledTime, baseTime]
+          );
         }
       }
-      
-      await db.runAsync(
-        'INSERT INTO scheduled_tests (study_protocol_id, supplement_log_id, test_type, scheduled_time, created_at) VALUES (?, ?, ?, ?, ?)',
-        [protocol.id, supplementLogId, protocol.test_type, scheduledTime, baseTime]
-      );
-    }
-  }
+    },
+    'scheduleEventBasedTests'
+  );
 };
 
 // Get upcoming tests (within next hour)
 export const getUpcomingTests = async (): Promise<ScheduledTest[]> => {
-  const db = await openDatabase();
-  const now = Math.floor(Date.now() / 1000);
-  const oneHourFromNow = now + (60 * 60);
-  
-  const result = await db.getAllAsync(
-    'SELECT * FROM scheduled_tests WHERE scheduled_time BETWEEN ? AND ? AND completed = 0 ORDER BY scheduled_time ASC',
-    [now, oneHourFromNow]
+  return await withDatabase(
+    async (db) => {
+      const now = Math.floor(Date.now() / 1000);
+      const oneHourFromNow = now + (60 * 60);
+      
+      const result = db.getAllSync(
+        'SELECT * FROM scheduled_tests WHERE scheduled_time BETWEEN ? AND ? AND completed = 0 ORDER BY scheduled_time ASC',
+        [now, oneHourFromNow]
+      );
+      
+      return result as ScheduledTest[];
+    },
+    'getUpcomingTests',
+    async () => []
   );
-  
-  return result as ScheduledTest[];
 };
 
 // Get overdue tests (past scheduled time but not completed)
 export const getOverdueTests = async (): Promise<ScheduledTest[]> => {
-  const db = await openDatabase();
-  const now = Math.floor(Date.now() / 1000);
-  
-  const result = await db.getAllAsync(
-    'SELECT * FROM scheduled_tests WHERE scheduled_time < ? AND completed = 0 ORDER BY scheduled_time ASC',
-    [now]
+  return await withDatabase(
+    async (db) => {
+      const now = Math.floor(Date.now() / 1000);
+      
+      const result = db.getAllSync(
+        'SELECT * FROM scheduled_tests WHERE scheduled_time < ? AND completed = 0 ORDER BY scheduled_time ASC',
+        [now]
+      );
+      
+      return result as ScheduledTest[];
+    },
+    'getOverdueTests',
+    async () => []
   );
-  
-  return result as ScheduledTest[];
 };
 
 // Check for test conflicts (tests scheduled within test duration + 30 seconds)
 export const checkTestConflicts = async (scheduledTime: number, testType: 'reflexes' | 'memory' | 'judgment'): Promise<ScheduledTest[]> => {
-  const db = await openDatabase();
+  const db = getDatabase();
+  if (!db) {
+    throw new Error('Database not available');
+  }
   
   // Get test durations in seconds
   const testDurations = {
@@ -138,7 +158,10 @@ export const checkTestConflicts = async (scheduledTime: number, testType: 'refle
 
 // Mark test as completed and link to test result
 export const completeScheduledTest = async (scheduledTestId: number, testResultId?: number): Promise<void> => {
-  const db = await openDatabase();
+  const db = getDatabase();
+  if (!db) {
+    throw new Error('Database not available');
+  }
   
   await db.runAsync(
     'UPDATE scheduled_tests SET completed = 1 WHERE id = ?',
@@ -154,7 +177,10 @@ export const completeScheduledTest = async (scheduledTestId: number, testResultI
 
 // Get all active study sessions (recently logged supplements with active protocols)
 export const getActiveStudySessions = async (): Promise<StudySession[]> => {
-  const db = await openDatabase();
+  const db = getDatabase();
+  if (!db) {
+    throw new Error('Database not available');
+  }
   const sixHoursAgo = Math.floor(Date.now() / 1000) - (6 * 60 * 60);
   
   const result: any[] = await db.getAllAsync(`
@@ -202,7 +228,10 @@ export const getActiveStudySessions = async (): Promise<StudySession[]> => {
 
 // Get the most relevant scheduled test for a given test type (closest to current time)
 export const getRelevantScheduledTest = async (testType: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'melody_repeater' | 'tile_puzzle' | 'trail_maker' | 'n_back'): Promise<ScheduledTest | null> => {
-  const db = await openDatabase();
+  const db = getDatabase();
+  if (!db) {
+    throw new Error('Database not available');
+  }
   const now = Math.floor(Date.now() / 1000);
   const twoHoursAgo = now - (2 * 60 * 60); // Look back 2 hours
   const oneHourFromNow = now + (60 * 60); // Look ahead 1 hour
@@ -222,7 +251,10 @@ export const getRelevantScheduledTest = async (testType: 'reflexes' | 'memory' |
 
 // Get scheduled test by ID
 export const getScheduledTestById = async (id: number): Promise<ScheduledTest | null> => {
-  const db = await openDatabase();
+  const db = getDatabase();
+  if (!db) {
+    throw new Error('Database not available');
+  }
   
   const result = await db.getAllAsync(
     'SELECT * FROM scheduled_tests WHERE id = ?',
@@ -238,7 +270,10 @@ export const getTestContext = async (scheduledTestId: number): Promise<{
   supplement_log_id?: number;
   supplement_name?: string;
 } | null> => {
-  const db = await openDatabase();
+  const db = getDatabase();
+  if (!db) {
+    throw new Error('Database not available');
+  }
   
   const result = await db.getAllAsync(`
     SELECT 
@@ -259,7 +294,10 @@ export const checkForOverlappingTests = async (
   testType: 'reflexes' | 'memory' | 'judgment', 
   scheduledTime: number
 ): Promise<{hasOverlap: boolean, overlappingTests: ScheduledTest[]}> => {
-  const db = await openDatabase();
+  const db = getDatabase();
+  if (!db) {
+    throw new Error('Database not available');
+  }
   
   // Get test durations in seconds
   const testDurations = {
@@ -291,25 +329,30 @@ export const checkForOverlappingTests = async (
 
 // Get currently active tests (tests that should be happening right now)
 export const getCurrentlyActiveTests = async (): Promise<ScheduledTest[]> => {
-  const db = await openDatabase();
-  const now = Math.floor(Date.now() / 1000);
-  
-  // Consider tests active if they started within their test duration and aren't completed
-  const result = await db.getAllAsync(`
-    SELECT st.*, 
-           CASE 
-             WHEN st.test_type = 'reflexes' THEN 10
-             WHEN st.test_type = 'memory' THEN 60  
-             WHEN st.test_type = 'judgment' THEN 30
-           END as duration_seconds
-    FROM scheduled_tests st
-    WHERE st.completed = 0 
-      AND st.scheduled_time <= ?
-      AND st.scheduled_time > (? - duration_seconds)
-    ORDER BY st.scheduled_time ASC
-  `, [now, now]);
-  
-  return result as ScheduledTest[];
+  return await withDatabase(
+    async (db) => {
+      const now = Math.floor(Date.now() / 1000);
+      
+      // Consider tests active if they started within their test duration and aren't completed
+      const result = db.getAllSync(`
+        SELECT st.*, 
+               CASE 
+                 WHEN st.test_type = 'reflexes' THEN 10
+                 WHEN st.test_type = 'memory' THEN 60  
+                 WHEN st.test_type = 'judgment' THEN 30
+               END as duration_seconds
+        FROM scheduled_tests st
+        WHERE st.completed = 0 
+          AND st.scheduled_time <= ?
+          AND st.scheduled_time > (? - duration_seconds)
+        ORDER BY st.scheduled_time ASC
+      `, [now, now]);
+      
+      return result as ScheduledTest[];
+    },
+    'getCurrentlyActiveTests',
+    async () => []
+  );
 };
 
 // Check if user is currently in the middle of a test session
@@ -349,7 +392,10 @@ export const suggestAlternativeTime = async (
   testType: 'reflexes' | 'memory' | 'judgment',
   preferredTime: number
 ): Promise<number[]> => {
-  const db = await openDatabase();
+  const db = getDatabase();
+  if (!db) {
+    throw new Error('Database not available');
+  }
   
   // Get all scheduled tests for the next 4 hours
   const fourHoursFromPreferred = preferredTime + (4 * 60 * 60);
@@ -397,7 +443,10 @@ export const suggestAlternativeTime = async (
 
 // Clean up old completed tests (older than 24 hours)
 export const cleanupOldScheduledTests = async (): Promise<void> => {
-  const db = await openDatabase();
+  const db = getDatabase();
+  if (!db) {
+    throw new Error('Database not available');
+  }
   const twentyFourHoursAgo = Math.floor(Date.now() / 1000) - (24 * 60 * 60);
   
   await db.runAsync(

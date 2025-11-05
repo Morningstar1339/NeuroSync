@@ -220,6 +220,18 @@ export default function SettingsScreen() {
               </ThemedText>
             </ThemedView>
 
+            {/* Database Debug Section */}
+            <ThemedView style={styles.debugSection}>
+              <ThemedText style={styles.debugTitle}>Developer Tools</ThemedText>
+              <TouchableOpacity
+                style={styles.debugButton}
+                onPress={() => router.push('/database-debug')}
+              >
+                <ThemedText style={styles.debugButtonText}>Database Debug</ThemedText>
+                <ThemedText style={styles.debugButtonSubtext}>Diagnose database issues</ThemedText>
+              </TouchableOpacity>
+            </ThemedView>
+
             {/* Spacer to ensure buttons don't overlap content */}
             <ThemedView style={styles.bottomSpacer} />
           </ScrollView>
@@ -417,6 +429,39 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     color: '#333',
     lineHeight: 20,
+  },
+  debugSection: {
+    backgroundColor: '#FFF3CD',
+    padding: 20,
+    borderRadius: 12,
+    marginTop: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#FFC107',
+  },
+  debugTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+    color: '#856404',
+    textAlign: 'center',
+  },
+  debugButton: {
+    backgroundColor: '#FFC107',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  debugButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#212529',
+    marginBottom: 2,
+  },
+  debugButtonSubtext: {
+    fontSize: 12,
+    color: '#6C757D',
   },
   bottomSpacer: {
     height: isVerySmallScreen ? 80 : isSmallScreen ? 100 : 120,

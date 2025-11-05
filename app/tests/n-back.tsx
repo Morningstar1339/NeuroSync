@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, TouchableOpacity, View, Dimensions, Alert, ScrollView } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useRouter } from 'expo-router';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
+import { validateTestPrerequisites, handleTestSaveError } from '@/utils/test-validation';
+import { checkDatabaseHealth } from '@/database/database';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 const SHAPE_SIZE = Math.min(250, screenWidth * 0.6, screenHeight * 0.25); // Responsive size with max 250px
@@ -141,6 +144,15 @@ export default function NBackTestScreen() {
   };
 
   const startGame = async () => {
+    console.log('🔄 N-BACK TEST: Starting game with pre-validation...');
+    
+    // Pre-test validation: Check database accessibility
+    const canProceed = await validateTestPrerequisites('N-Back');
+    if (!canProceed) {
+      console.log('❌ N-BACK TEST: Pre-validation failed, aborting test start');
+      return;
+    }
+    
     try {
       const activeSession = await isUserInActiveTestSession();
       if (activeSession.isActive && activeSession.activeTest?.test_type !== 'n_back') {
@@ -158,6 +170,7 @@ export default function NBackTestScreen() {
       console.error('Failed to check active session:', error);
     }
     
+    console.log('✅ N-BACK TEST: Pre-validation passed, starting instructions');
     startInstructions();
   };
 
@@ -213,19 +226,35 @@ export default function NBackTestScreen() {
       trials: trials
     };
     
-    try {
-      const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
-      const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
-      
-      const score = Math.floor(accuracy * 100);
-      await saveCognitiveTestResult('n_back', score, rawData, undefined, studyId, supplementLogId);
-      
-      if (scheduledTest) {
-        await completeScheduledTest(scheduledTest.id);
+    // Save test result with graceful error handling
+    const saveTestResult = async () => {
+      try {
+        console.log('🔄 N-BACK TEST: Saving test result...');
+        const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
+        const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
+        
+        const score = Math.floor(accuracy * 100);
+        await saveCognitiveTestResult('n_back', score, rawData, undefined, studyId, supplementLogId);
+        
+        if (scheduledTest) {
+          await completeScheduledTest(scheduledTest.id);
+        }
+        
+        console.log('✅ N-BACK TEST: Test result saved successfully');
+      } catch (error) {
+        console.log('❌ N-BACK TEST: Failed to save test result:', error);
+        
+        // Show error alert with retry option
+        handleTestSaveError(
+          'N-Back',
+          error,
+          saveTestResult, // Retry function
+          () => router.push('/cognitive-tests') // Return to menu function
+        );
       }
-    } catch (error) {
-      console.error('Failed to save n-back test result:', error);
-    }
+    };
+    
+    await saveTestResult();
   };
 
   // Approximation of the inverse normal distribution for d-prime calculation
@@ -289,6 +318,17 @@ export default function NBackTestScreen() {
     
     checkTestStatus();
   }, []);
+
+  // Navigation event logging
+  useFocusEffect(
+    React.useCallback(() => {
+      console.log('📱 NAVIGATED TO: N-Back Test');
+      console.log('DB status on navigation:', checkDatabaseHealth());
+      return () => {
+        console.log('📱 NAVIGATING AWAY FROM: N-Back Test');
+      };
+    }, [])
+  );
 
   if (gameState === 'ready') {
     return (

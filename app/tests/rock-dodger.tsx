@@ -3,12 +3,13 @@ import { StyleSheet, TouchableOpacity, View, Dimensions, Alert, ScrollView } fro
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const PLAYER_SIZE = 40;
@@ -26,6 +27,7 @@ interface Obstacle {
 export default function RockDodgerTestScreen() {
   console.log('RockDodgerTestScreen component loaded successfully');
   const router = useRouter();
+  const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
   const insets = useSafeAreaInsets();
   
@@ -122,7 +124,7 @@ export default function RockDodgerTestScreen() {
         
         const currentPlayerX = playerX.value;
         passedObstacles.forEach(obstacle => {
-          const dodgeDistance = Math.abs(currentPlayerX + PLAYER_SIZE/2 - obstacle.x - OBSTACLE_SIZE/2);
+          const dodgeDistance = Math.abs(currentPlayerX + PLAYER_SIZE/2 - obstacle.x - ROCK_SIZE/2);
           totalDodgeDistance.current += dodgeDistance;
         });
       }
@@ -251,6 +253,52 @@ export default function RockDodgerTestScreen() {
 
   const handleBackToMenu = () => {
     router.push('/cognitive-tests');
+  };
+
+  const handleExitTest = () => {
+    if (gameState === 'playing') {
+      Alert.alert(
+        'Exit Test?',
+        'Your progress will not be saved. Are you sure you want to exit?',
+        [
+          {
+            text: 'No',
+            style: 'cancel',
+          },
+          {
+            text: 'Yes',
+            style: 'destructive',
+            onPress: () => {
+              // Clean up timers
+              if (gameTimer.current) clearInterval(gameTimer.current);
+              if (spawnTimer.current) clearInterval(spawnTimer.current);
+              
+              // Handle sequence navigation
+              if (params.sequence === 'all-nine') {
+                router.push('/tests/all-nine');
+              } else {
+                router.push('/cognitive-tests');
+              }
+            },
+          },
+        ]
+      );
+    } else {
+      // Handle sequence navigation for non-playing states
+      if (params.sequence === 'all-nine') {
+        router.push('/tests/all-nine');
+      } else {
+        router.push('/cognitive-tests');
+      }
+    }
+  };
+
+  const handleNextTestOrFinish = () => {
+    if (params.sequence === 'all-nine') {
+      router.push('/tests/pattern-matcher?sequence=all-nine');
+    } else {
+      router.push('/cognitive-tests');
+    }
   };
 
   const handlePlayAgain = () => {

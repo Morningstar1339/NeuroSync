@@ -1,4 +1,4 @@
-import { withDatabase, getFallbackData, addFallbackData } from './database';
+import { withDatabase, getFallbackData, addFallbackData, getDatabase, checkDatabaseHealth } from './database';
 
 export interface CognitiveTestResult {
   id: number;
@@ -20,37 +20,122 @@ export const saveCognitiveTestResult = async (
   supplementLogId?: number
 ): Promise<number> => {
   const timestamp = Math.floor(Date.now() / 1000);
+  const operationId = `save-${testType}-${timestamp}`;
   
-  return await withDatabase(
-    async (db) => {
-      const result = await db.runAsync(
-        'INSERT INTO cognitive_test_results (test_type, timestamp, score, raw_data, completion_time, study_id, supplement_log_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [
-          testType,
-          timestamp,
-          score,
-          rawData ? JSON.stringify(rawData) : null,
-          completionTime || null,
-          studyId || null,
-          supplementLogId || null
-        ]
-      );
-      return result.lastInsertRowId;
-    },
-    'saveCognitiveTestResult',
-    async () => {
-      // Fallback mode
-      return addFallbackData('cognitive_test_results', {
-        test_type: testType,
-        timestamp,
-        score,
-        raw_data: rawData ? JSON.stringify(rawData) : null,
-        completion_time: completionTime || null,
-        study_id: studyId || null,
-        supplement_log_id: supplementLogId || null
-      });
+  console.log(`🔄 [${operationId}] SAVE TEST RESULT: Starting save operation for ${testType} test`);
+  console.log(`🔄 [${operationId}] Test data: score=${score}, completionTime=${completionTime}, studyId=${studyId}, supplementLogId=${supplementLogId}`);
+  
+  try {
+    // Pre-save validation: Check database health
+    console.log(`🔄 [${operationId}] STEP 1: Checking database health...`);
+    const healthCheck = checkDatabaseHealth();
+    console.log(`🔄 [${operationId}] Database health: healthy=${healthCheck.healthy}, issues=${healthCheck.issues.length}`);
+    
+    if (!healthCheck.healthy) {
+      console.log(`❌ [${operationId}] STEP 1 FAILED: Database unhealthy - ${healthCheck.issues.join(', ')}`);
+      throw new Error(`Database health check failed: ${healthCheck.issues.join(', ')}`);
     }
-  );
+    console.log(`✅ [${operationId}] STEP 1 COMPLETE: Database health check passed`);
+    
+    // Pre-save validation: Get database instance
+    console.log(`🔄 [${operationId}] STEP 2: Getting database instance...`);
+    const db = getDatabase();
+    if (!db) {
+      console.log(`❌ [${operationId}] STEP 2 FAILED: Database instance is null`);
+      throw new Error('Database instance not available');
+    }
+    console.log(`✅ [${operationId}] STEP 2 COMPLETE: Database instance obtained`);
+    
+    // Validate input data
+    console.log(`🔄 [${operationId}] STEP 3: Validating input data...`);
+    if (typeof score !== 'number' || isNaN(score)) {
+      throw new Error(`Invalid score: ${score} (must be a number)`);
+    }
+    if (completionTime !== undefined && (typeof completionTime !== 'number' || isNaN(completionTime))) {
+      throw new Error(`Invalid completion time: ${completionTime} (must be a number)`);
+    }
+    console.log(`✅ [${operationId}] STEP 3 COMPLETE: Input data validation passed`);
+    
+    // Prepare data for insertion
+    console.log(`🔄 [${operationId}] STEP 4: Preparing data for insertion...`);
+    const insertData = {
+      test_type: testType,
+      timestamp,
+      score,
+      raw_data: rawData ? JSON.stringify(rawData) : null,
+      completion_time: completionTime || null,
+      study_id: studyId || null,
+      supplement_log_id: supplementLogId || null
+    };
+    console.log(`🔄 [${operationId}] Insert data prepared:`, insertData);
+    console.log(`✅ [${operationId}] STEP 4 COMPLETE: Data preparation complete`);
+    
+    return await withDatabase(
+      async (db) => {
+        console.log(`🔄 [${operationId}] STEP 5: Executing database insert...`);
+        try {
+          const result = await db.runAsync(
+            'INSERT INTO cognitive_test_results (test_type, timestamp, score, raw_data, completion_time, study_id, supplement_log_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [
+              testType,
+              timestamp,
+              score,
+              rawData ? JSON.stringify(rawData) : null,
+              completionTime || null,
+              studyId || null,
+              supplementLogId || null
+            ]
+          );
+          
+          const insertId = result.lastInsertRowId;
+          console.log(`✅ [${operationId}] STEP 5 COMPLETE: Database insert successful - ID: ${insertId}`);
+          console.log(`🎉 [${operationId}] SAVE TEST RESULT: SUCCESS - ${testType} test result saved with ID ${insertId}`);
+          
+          return insertId;
+        } catch (dbError) {
+          console.log(`❌ [${operationId}] STEP 5 FAILED: Database insert error:`, dbError);
+          console.log(`❌ [${operationId}] Error details:`);
+          console.log(`   - Error name: ${dbError instanceof Error ? dbError.name : 'Unknown'}`);
+          console.log(`   - Error message: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+          console.log(`   - Error stack: ${dbError instanceof Error ? dbError.stack : 'No stack trace'}`);
+          console.log(`   - Test type: ${testType}`);
+          console.log(`   - Score: ${score}`);
+          console.log(`   - Raw data length: ${rawData ? JSON.stringify(rawData).length : 0} characters`);
+          console.log(`   - Completion time: ${completionTime}`);
+          console.log(`   - Study ID: ${studyId}`);
+          console.log(`   - Supplement log ID: ${supplementLogId}`);
+          
+          throw new Error(`Database insert failed: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+        }
+      },
+      `saveCognitiveTestResult-${testType}`,
+      async () => {
+        console.log(`🔄 [${operationId}] FALLBACK: Using fallback mode...`);
+        try {
+          const fallbackId = addFallbackData('cognitive_test_results', insertData);
+          console.log(`✅ [${operationId}] FALLBACK SUCCESS: Saved to fallback with ID ${fallbackId}`);
+          return fallbackId;
+        } catch (fallbackError) {
+          console.log(`❌ [${operationId}] FALLBACK FAILED:`, fallbackError);
+          throw new Error(`Both database and fallback save failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+        }
+      }
+    );
+    
+  } catch (error) {
+    console.log(`❌ [${operationId}] SAVE TEST RESULT: CRITICAL FAILURE`);
+    console.log(`❌ [${operationId}] Error details:`);
+    console.log(`   - Error name: ${error instanceof Error ? error.name : 'Unknown'}`);
+    console.log(`   - Error message: ${error instanceof Error ? error.message : String(error)}`);
+    console.log(`   - Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
+    console.log(`   - Test type: ${testType}`);
+    console.log(`   - Score: ${score}`);
+    console.log(`   - Timestamp: ${timestamp}`);
+    console.log(`   - Raw data: ${rawData ? JSON.stringify(rawData).substring(0, 200) + '...' : 'null'}`);
+    
+    // Re-throw with enhanced error message
+    throw new Error(`Failed to save ${testType} test result (score: ${score}): ${error instanceof Error ? error.message : String(error)}`);
+  }
 };
 
 export const getCognitiveTestResults = async (

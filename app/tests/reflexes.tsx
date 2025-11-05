@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, TouchableOpacity, View, Dimensions, Alert, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
+import { validateTestPrerequisites, handleTestSaveError } from '@/utils/test-validation';
+import { checkDatabaseHealth } from '@/database/database';
+import { Ionicons } from '@expo/vector-icons';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const BUBBLE_SIZE = 40; // ~1cm on most devices
@@ -19,6 +23,7 @@ interface BubblePosition {
 
 export default function ReflexesTestScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
   const insets = useSafeAreaInsets();
   
@@ -71,6 +76,15 @@ export default function ReflexesTestScreen() {
   };
 
   const startGame = async () => {
+    console.log('🔄 REFLEXES TEST: Starting game with pre-validation...');
+    
+    // Pre-test validation: Check database accessibility
+    const canProceed = await validateTestPrerequisites('Reflexes');
+    if (!canProceed) {
+      console.log('❌ REFLEXES TEST: Pre-validation failed, aborting test start');
+      return;
+    }
+    
     // Check for active test sessions before starting
     try {
       const activeSession = await isUserInActiveTestSession();
@@ -89,6 +103,7 @@ export default function ReflexesTestScreen() {
       console.error('Failed to check active session:', error);
     }
     
+    console.log('✅ REFLEXES TEST: Pre-validation passed, starting game');
     startGameNow();
   };
 
@@ -124,26 +139,41 @@ export default function ReflexesTestScreen() {
       clearInterval(countdownTimer.current);
     }
     
-    // Save test result with study context if available
-    try {
-      const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
-      const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
-      
-      const rawData = {
-        finalScore: score,
-        testDuration: TEST_DURATION / 1000,
-        bubblesHit: score > 0 ? score : 0,
-        misses: score < 0 ? Math.abs(score) : 0
-      };
-      await saveCognitiveTestResult('reflexes', score, rawData, TEST_DURATION / 1000, studyId, supplementLogId);
-      
-      // Mark scheduled test as completed if this was for a study
-      if (scheduledTest) {
-        await completeScheduledTest(scheduledTest.id);
+    // Save test result with graceful error handling
+    const saveTestResult = async () => {
+      try {
+        console.log('🔄 REFLEXES TEST: Saving test result...');
+        const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
+        const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
+        
+        const rawData = {
+          finalScore: score,
+          testDuration: TEST_DURATION / 1000,
+          bubblesHit: score > 0 ? score : 0,
+          misses: score < 0 ? Math.abs(score) : 0
+        };
+        await saveCognitiveTestResult('reflexes', score, rawData, TEST_DURATION / 1000, studyId, supplementLogId);
+        
+        // Mark scheduled test as completed if this was for a study
+        if (scheduledTest) {
+          await completeScheduledTest(scheduledTest.id);
+        }
+        
+        console.log('✅ REFLEXES TEST: Test result saved successfully');
+      } catch (error) {
+        console.log('❌ REFLEXES TEST: Failed to save test result:', error);
+        
+        // Show error alert with retry option
+        handleTestSaveError(
+          'Reflexes',
+          error,
+          saveTestResult, // Retry function
+          handleBackToMenu // Return to menu function
+        );
       }
-    } catch (error) {
-      console.error('Failed to save reflexes test result:', error);
-    }
+    };
+    
+    await saveTestResult();
   };
 
   const handleBubbleTap = () => {
@@ -164,8 +194,64 @@ export default function ReflexesTestScreen() {
     router.push('/cognitive-tests');
   };
 
+  const handleExitTest = () => {
+    if (gameState === 'playing') {
+      Alert.alert(
+        'Exit Test?',
+        'Your progress will not be saved. Are you sure you want to exit?',
+        [
+          {
+            text: 'No',
+            style: 'cancel',
+          },
+          {
+            text: 'Yes',
+            style: 'destructive',
+            onPress: () => {
+              // Clean up timers
+              if (gameTimer.current) {
+                clearTimeout(gameTimer.current);
+              }
+              if (countdownTimer.current) {
+                clearInterval(countdownTimer.current);
+              }
+              
+              // Handle sequence navigation
+              if (params.sequence === 'all-nine') {
+                router.push('/tests/all-nine');
+              } else if (params.sequence === 'all-three') {
+                router.push('/tests/all-three');
+              } else {
+                router.push('/cognitive-tests');
+              }
+            },
+          },
+        ]
+      );
+    } else {
+      // Handle sequence navigation for non-playing states
+      if (params.sequence === 'all-nine') {
+        router.push('/tests/all-nine');
+      } else if (params.sequence === 'all-three') {
+        router.push('/tests/all-three');
+      } else {
+        router.push('/cognitive-tests');
+      }
+    }
+  };
+
   const handlePlayAgain = () => {
     startGame();
+  };
+
+  const handleNextTestOrFinish = () => {
+    if (params.sequence === 'all-nine') {
+      router.push('/tests/memory?sequence=all-nine');
+    } else if (params.sequence === 'all-three') {
+      router.push('/tests/memory?sequence=all-three');
+    } else {
+      router.push('/cognitive-tests');
+    }
   };
 
   useEffect(() => {
@@ -202,11 +288,29 @@ export default function ReflexesTestScreen() {
     };
   }, []);
 
+  // Navigation event logging
+  useFocusEffect(
+    React.useCallback(() => {
+      console.log('📱 NAVIGATED TO: Reflexes Test');
+      console.log('DB status on navigation:', checkDatabaseHealth());
+      return () => {
+        console.log('📱 NAVIGATING AWAY FROM: Reflexes Test');
+      };
+    }, [])
+  );
+
   if (gameState === 'ready') {
     return (
       <ThemedView style={styles.container} safeArea>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.instructionsContainer}>
+          {(params.sequence === 'all-nine' || params.sequence === 'all-three') && (
+            <ThemedView style={[styles.progressBanner, { backgroundColor: tintColor + '15', borderColor: tintColor }]}>
+              <ThemedText style={[styles.progressText, { color: tintColor }]}>
+                {params.sequence === 'all-nine' ? 'Test 1 of 9' : 'Test 1 of 3'} • Run All Tests Mode
+              </ThemedText>
+            </ThemedView>
+          )}
           <ThemedText type="title" style={styles.title}>Reflexes Test</ThemedText>
           {scheduledTest && studyContext?.supplement_name && (
             <ThemedView style={[styles.studyBanner, { backgroundColor: tintColor + '20', borderColor: tintColor }]}>
@@ -259,15 +363,31 @@ export default function ReflexesTestScreen() {
              score >= 10 ? 'Good performance!' : 
              score >= 5 ? 'Not bad!' : 'Keep practicing!'}
           </ThemedText>
-          <TouchableOpacity 
-            style={[styles.startButton, { backgroundColor: tintColor }]} 
-            onPress={handlePlayAgain}
-          >
-            <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
-            <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
-          </TouchableOpacity>
+          {(params.sequence === 'all-nine' || params.sequence === 'all-three') ? (
+            <>
+              <TouchableOpacity 
+                style={[styles.startButton, { backgroundColor: tintColor }]} 
+                onPress={handleNextTestOrFinish}
+              >
+                <ThemedText style={styles.startButtonText}>Next Test</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.backButton} onPress={handleExitTest}>
+                <ThemedText style={styles.backButtonText}>Exit Test Battery</ThemedText>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity 
+                style={[styles.startButton, { backgroundColor: tintColor }]} 
+                onPress={handlePlayAgain}
+              >
+                <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+                <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
+              </TouchableOpacity>
+            </>
+          )}
         </ThemedView>
         </ScrollView>
       </ThemedView>
@@ -281,8 +401,18 @@ export default function ReflexesTestScreen() {
       activeOpacity={1}
     >
       <ThemedView style={[styles.gameHeader, { paddingTop: insets.top + 60 }]}>
-        <ThemedText style={styles.timer}>Time: {timeLeft}s</ThemedText>
-        <ThemedText style={styles.scoreText}>Score: {score}</ThemedText>
+        <TouchableOpacity
+          style={styles.exitButton}
+          onPress={handleExitTest}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="close-outline" size={24} color={tintColor} />
+        </TouchableOpacity>
+        <View style={styles.gameStats}>
+          <ThemedText style={styles.timer}>Time: {timeLeft}s</ThemedText>
+          <ThemedText style={styles.scoreText}>Score: {score}</ThemedText>
+        </View>
+        <View style={styles.headerSpacer} />
       </ThemedView>
       
       <View style={styles.gameArea}>
@@ -365,9 +495,28 @@ const styles = StyleSheet.create({
   gameHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: 60,
     paddingBottom: 20,
+  },
+  exitButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  gameStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    flex: 1,
+    marginHorizontal: 20,
+  },
+  headerSpacer: {
+    width: 40,
+    height: 40,
   },
   timer: {
     fontSize: 18,
@@ -417,6 +566,19 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     paddingHorizontal: 20,
     lineHeight: 24,
+  },
+  progressBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 15,
+    alignItems: 'center',
+  },
+  progressText: {
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   studyBanner: {
     paddingHorizontal: 16,
