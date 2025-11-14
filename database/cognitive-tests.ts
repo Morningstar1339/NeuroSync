@@ -1,4 +1,4 @@
-import { withDatabase, getFallbackData, addFallbackData, getDatabase, checkDatabaseHealth } from './database';
+import { withDatabase, getFallbackData, addFallbackData, getDatabase, checkDatabaseHealth, asyncStorageGet, asyncStorageAdd } from './database';
 
 export interface CognitiveTestResult {
   id: number;
@@ -72,28 +72,16 @@ export const saveCognitiveTestResult = async (
     
     return await withDatabase(
       async (db) => {
-        console.log(`🔄 [${operationId}] STEP 5: Executing database insert...`);
+        console.log(`🔄 [${operationId}] STEP 5: Executing AsyncStorage insert...`);
         try {
-          const result = await db.runAsync(
-            'INSERT INTO cognitive_test_results (test_type, timestamp, score, raw_data, completion_time, study_id, supplement_log_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [
-              testType,
-              timestamp,
-              score,
-              rawData ? JSON.stringify(rawData) : null,
-              completionTime || null,
-              studyId || null,
-              supplementLogId || null
-            ]
-          );
+          const insertId = await asyncStorageAdd('cognitive_test_results', insertData);
           
-          const insertId = result.lastInsertRowId;
-          console.log(`✅ [${operationId}] STEP 5 COMPLETE: Database insert successful - ID: ${insertId}`);
+          console.log(`✅ [${operationId}] STEP 5 COMPLETE: AsyncStorage insert successful - ID: ${insertId}`);
           console.log(`🎉 [${operationId}] SAVE TEST RESULT: SUCCESS - ${testType} test result saved with ID ${insertId}`);
           
           return insertId;
         } catch (dbError) {
-          console.log(`❌ [${operationId}] STEP 5 FAILED: Database insert error:`, dbError);
+          console.log(`❌ [${operationId}] STEP 5 FAILED: AsyncStorage insert error:`, dbError);
           console.log(`❌ [${operationId}] Error details:`);
           console.log(`   - Error name: ${dbError instanceof Error ? dbError.name : 'Unknown'}`);
           console.log(`   - Error message: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
@@ -105,7 +93,7 @@ export const saveCognitiveTestResult = async (
           console.log(`   - Study ID: ${studyId}`);
           console.log(`   - Supplement log ID: ${supplementLogId}`);
           
-          throw new Error(`Database insert failed: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+          throw new Error(`AsyncStorage insert failed: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
         }
       },
       `saveCognitiveTestResult-${testType}`,
@@ -144,25 +132,21 @@ export const getCognitiveTestResults = async (
 ): Promise<CognitiveTestResult[]> => {
   return await withDatabase(
     async (db) => {
-      let query = 'SELECT * FROM cognitive_test_results';
-      const params: any[] = [];
+      let results = await asyncStorageGet('cognitive_test_results');
       
       if (testType) {
-        query += ' WHERE test_type = ?';
-        params.push(testType);
+        results = results.filter((result: any) => result.test_type === testType);
       }
       
-      query += ' ORDER BY timestamp DESC';
+      results.sort((a: any, b: any) => b.timestamp - a.timestamp);
       
       if (limit) {
-        query += ' LIMIT ?';
-        params.push(limit);
+        results = results.slice(0, limit);
       }
       
-      const result = await db.getAllAsync(query, params);
-      return result.map((row: any) => ({
+      return results.map((row: any) => ({
         ...row,
-        raw_data: row.raw_data ? JSON.parse(row.raw_data) : undefined
+        raw_data: typeof row.raw_data === 'string' ? JSON.parse(row.raw_data) : row.raw_data
       })) as CognitiveTestResult[];
     },
     'getCognitiveTestResults',
@@ -182,7 +166,7 @@ export const getCognitiveTestResults = async (
       
       return results.map((row: any) => ({
         ...row,
-        raw_data: row.raw_data ? JSON.parse(row.raw_data) : undefined
+        raw_data: typeof row.raw_data === 'string' ? JSON.parse(row.raw_data) : row.raw_data
       })) as CognitiveTestResult[];
     }
   );
@@ -195,20 +179,19 @@ export const getTestResultsOlderThan24Hours = async (
   
   return await withDatabase(
     async (db) => {
-      let query = 'SELECT * FROM cognitive_test_results WHERE timestamp < ?';
-      const params: any[] = [twentyFourHoursAgo];
+      let results = await asyncStorageGet('cognitive_test_results');
+      
+      results = results.filter((result: any) => result.timestamp < twentyFourHoursAgo);
       
       if (testType) {
-        query += ' AND test_type = ?';
-        params.push(testType);
+        results = results.filter((result: any) => result.test_type === testType);
       }
       
-      query += ' ORDER BY timestamp DESC';
+      results.sort((a: any, b: any) => b.timestamp - a.timestamp);
       
-      const result = await db.getAllAsync(query, params);
-      return result.map((row: any) => ({
+      return results.map((row: any) => ({
         ...row,
-        raw_data: row.raw_data ? JSON.parse(row.raw_data) : undefined
+        raw_data: typeof row.raw_data === 'string' ? JSON.parse(row.raw_data) : row.raw_data
       })) as CognitiveTestResult[];
     },
     'getTestResultsOlderThan24Hours',
@@ -226,7 +209,7 @@ export const getTestResultsOlderThan24Hours = async (
       
       return results.map((row: any) => ({
         ...row,
-        raw_data: row.raw_data ? JSON.parse(row.raw_data) : undefined
+        raw_data: typeof row.raw_data === 'string' ? JSON.parse(row.raw_data) : row.raw_data
       })) as CognitiveTestResult[];
     }
   );

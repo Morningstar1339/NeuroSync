@@ -455,18 +455,18 @@ export default function ConnectionsTestScreen() {
                 <ThemedText style={styles.exampleSubLabel}>Short Lines</ThemedText>
                 <ThemedText style={styles.exampleSubLabel}>No Loops</ThemedText>
                 <Svg width={100} height={60} style={styles.exampleSvg}>
-                  <Circle cx={20} cy={10} r={4} fill={tintColor} stroke="white" strokeWidth="1" />
-                  <Circle cx={70} cy={15} r={4} fill={tintColor} stroke="white" strokeWidth="1" />
+                  <Circle cx={25} cy={15} r={4} fill={tintColor} stroke="white" strokeWidth="1" />
+                  <Circle cx={45} cy={10} r={4} fill={tintColor} stroke="white" strokeWidth="1" />
                   <Circle cx={35} cy={25} r={4} fill={tintColor} stroke="white" strokeWidth="1" />
-                  <Circle cx={60} cy={40} r={4} fill={tintColor} stroke="white" strokeWidth="1" />
-                  <Circle cx={15} cy={50} r={4} fill={tintColor} stroke="white" strokeWidth="1" />
-                  <Circle cx={80} cy={50} r={4} fill={tintColor} stroke="white" strokeWidth="1" />
+                  <Circle cx={55} cy={30} r={4} fill={tintColor} stroke="white" strokeWidth="1" />
+                  <Circle cx={20} cy={40} r={4} fill={tintColor} stroke="white" strokeWidth="1" />
+                  <Circle cx={70} cy={45} r={4} fill={tintColor} stroke="white" strokeWidth="1" />
                   
-                  <Line x1={20} y1={10} x2={35} y2={25} stroke={tintColor} strokeWidth="2" />
-                  <Line x1={35} y1={25} x2={70} y2={15} stroke={tintColor} strokeWidth="2" />
-                  <Line x1={35} y1={25} x2={60} y2={40} stroke={tintColor} strokeWidth="2" />
-                  <Line x1={35} y1={25} x2={15} y2={50} stroke={tintColor} strokeWidth="2" />
-                  <Line x1={60} y1={40} x2={80} y2={50} stroke={tintColor} strokeWidth="2" />
+                  <Line x1={25} y1={15} x2={45} y2={10} stroke={tintColor} strokeWidth="2" />
+                  <Line x1={25} y1={15} x2={35} y2={25} stroke={tintColor} strokeWidth="2" />
+                  <Line x1={35} y1={25} x2={55} y2={30} stroke={tintColor} strokeWidth="2" />
+                  <Line x1={35} y1={25} x2={20} y2={40} stroke={tintColor} strokeWidth="2" />
+                  <Line x1={55} y1={30} x2={70} y2={45} stroke={tintColor} strokeWidth="2" />
                 </Svg>
               </ThemedView>
               
