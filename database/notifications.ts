@@ -1,4 +1,4 @@
-import { withDatabase, getFallbackData, addFallbackData, updateFallbackData, isFallbackMode } from './database';
+import { withDatabase, getFallbackData, addFallbackData, isFallbackMode } from './database';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';

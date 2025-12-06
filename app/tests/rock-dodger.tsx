@@ -9,7 +9,6 @@ import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
-import { Ionicons } from '@expo/vector-icons';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const PLAYER_SIZE = 40;
@@ -32,6 +31,12 @@ export default function RockDodgerTestScreen() {
   const insets = useSafeAreaInsets();
   
   const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
+  const gameStateRef = useRef<'ready' | 'playing' | 'finished'>('ready');
+
+	useEffect(() => {
+	  gameStateRef.current = gameState;
+	}, [gameState]);
+
   const [survivalTime, setSurvivalTime] = useState(0);
   const [dodgeCount, setDodgeCount] = useState(0);
   const [difficultyLevel, setDifficultyLevel] = useState(1);
@@ -42,8 +47,8 @@ export default function RockDodgerTestScreen() {
   const [activeTestSession, setActiveTestSession] = useState<any>(null);
   
   const playerX = useSharedValue(screenWidth / 2 - PLAYER_SIZE / 2);
-  const gameTimer = useRef<NodeJS.Timeout | null>(null);
-  const spawnTimer = useRef<NodeJS.Timeout | null>(null);
+  const gameTimer = useRef<number | null>(null);
+  const spawnTimer = useRef<number | null>(null);
   const obstacleIdCounter = useRef(0);
   const startTime = useRef<number>(0);
   const totalDodgeDistance = useRef<number>(0);
@@ -92,8 +97,9 @@ export default function RockDodgerTestScreen() {
            playerBottom > obstacleTop;
   };
 
-  const updateGame = () => {
-    if (gameState !== 'playing') return;
+const updateGame = () => {
+  if (gameStateRef.current !== 'playing') return;
+
     
     const currentTime = Date.now();
     const survival = (currentTime - startTime.current) / 1000;
@@ -138,12 +144,12 @@ export default function RockDodgerTestScreen() {
     });
   };
 
-  const spawnObstacle = () => {
-    if (gameState !== 'playing') {
-      console.log('⚠️ Not spawning rock - game state:', gameState);
-      return;
-    }
-    
+	const spawnObstacle = () => {
+	  if (gameStateRef.current !== 'playing') {
+		console.log('⚠️ Not spawning rock - game state:', gameStateRef.current);
+		return;
+	  }
+
     const newRock = generateObstacle();
     setObstacles(prev => {
       const newObstacles = [...prev, newRock];
@@ -166,7 +172,7 @@ export default function RockDodgerTestScreen() {
   const startGame = async () => {
     try {
       const activeSession = await isUserInActiveTestSession();
-      if (activeSession.isActive && activeSession.activeTest?.test_type !== 'rock_dodger') {
+      if (activeSession.isActive && String(activeSession.activeTest?.test_type) !== 'rock_dodger') {
         Alert.alert(
           'Test Session Active',
           `You have an active ${activeSession.activeTest?.test_type} test (${Math.ceil(activeSession.timeRemaining || 0)}s remaining). Starting another test may affect your results.\n\nContinue anyway?`,
@@ -216,18 +222,23 @@ export default function RockDodgerTestScreen() {
     const finalSurvivalTime = survivalTime;
     const averageDodgeDistance = dodgeCount > 0 ? totalDodgeDistance.current / dodgeCount : 0;
     
+    const accuracy = finalSurvivalTime > 0 ? Math.min(1, finalSurvivalTime / 60) : 0;
+    const speed = finalSurvivalTime;
+    
     const rawData = {
       survivalTime: finalSurvivalTime,
       dodgeCount,
       averageDodgeDistance,
       difficultyLevel,
+      accuracy,
+      speed
     };
     
     try {
       const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
       const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
       
-      await saveCognitiveTestResult('rock_dodger', Math.floor(finalSurvivalTime), rawData, finalSurvivalTime, studyId, supplementLogId);
+      await saveCognitiveTestResult('rock_dodger', Math.floor(finalSurvivalTime), rawData, finalSurvivalTime, studyId, supplementLogId, accuracy, speed);
       
       if (scheduledTest) {
         await completeScheduledTest(scheduledTest.id);
@@ -237,13 +248,15 @@ export default function RockDodgerTestScreen() {
     }
   };
 
-  const panGesture = Gesture.Pan()
-    .onUpdate((event) => {
-      if (gameState === 'playing') {
-        const newX = Math.max(0, Math.min(screenWidth - PLAYER_SIZE, event.absoluteX - PLAYER_SIZE / 2));
-        playerX.value = newX;
-      }
-    });
+	const panGesture = Gesture.Pan()
+	  .onUpdate((event) => {
+		// Allow the player to move horizontally whenever the user drags.
+		const newX = Math.max(
+		  0,
+		  Math.min(screenWidth - PLAYER_SIZE, event.absoluteX - PLAYER_SIZE / 2)
+		);
+		playerX.value = newX;
+	  });
 
   const playerAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -252,50 +265,16 @@ export default function RockDodgerTestScreen() {
   });
 
   const handleBackToMenu = () => {
-    router.push('/cognitive-tests');
-  };
-
-  const handleExitTest = () => {
-    if (gameState === 'playing') {
-      Alert.alert(
-        'Exit Test?',
-        'Your progress will not be saved. Are you sure you want to exit?',
-        [
-          {
-            text: 'No',
-            style: 'cancel',
-          },
-          {
-            text: 'Yes',
-            style: 'destructive',
-            onPress: () => {
-              // Clean up timers
-              if (gameTimer.current) clearInterval(gameTimer.current);
-              if (spawnTimer.current) clearInterval(spawnTimer.current);
-              
-              // Handle sequence navigation
-              if (params.sequence === 'all-nine') {
-                router.push('/tests/all-nine');
-              } else {
-                router.push('/cognitive-tests');
-              }
-            },
-          },
-        ]
-      );
+    if (params.sequence === 'all-seven') {
+      router.push('/tests/all-nine');
     } else {
-      // Handle sequence navigation for non-playing states
-      if (params.sequence === 'all-nine') {
-        router.push('/tests/all-nine');
-      } else {
-        router.push('/cognitive-tests');
-      }
+      router.push('/cognitive-tests');
     }
   };
 
   const handleNextTestOrFinish = () => {
-    if (params.sequence === 'all-nine') {
-      router.push('/tests/pattern-matcher?sequence=all-nine');
+    if (params.sequence === 'all-seven') {
+      router.push('/tests/pattern-matcher?sequence=all-seven');
     } else {
       router.push('/cognitive-tests');
     }
@@ -309,7 +288,7 @@ export default function RockDodgerTestScreen() {
     const checkTestStatus = async () => {
       try {
         const activeSession = await isUserInActiveTestSession();
-        if (activeSession.isActive && activeSession.activeTest?.test_type !== 'rock_dodger') {
+        if (activeSession.isActive && String(activeSession.activeTest?.test_type) !== 'rock_dodger') {
           setActiveTestSession(activeSession);
         }
         
@@ -385,6 +364,7 @@ export default function RockDodgerTestScreen() {
           <ThemedView style={styles.resultsContainer}>
             <ThemedText type="title" style={styles.title}>Test Complete!</ThemedText>
             <ThemedText style={styles.finalScore}>Survival Time: {survivalTime.toFixed(1)}s</ThemedText>
+            <ThemedText style={styles.metricText}>Accuracy: {(Math.min(1, survivalTime / 60) * 100).toFixed(1)}% | Speed: {survivalTime.toFixed(1)}s</ThemedText>
             <ThemedText style={styles.metricText}>Dodges: {dodgeCount}</ThemedText>
             <ThemedText style={styles.metricText}>Difficulty Reached: Level {difficultyLevel}</ThemedText>
             <ThemedText style={styles.metricText}>
@@ -395,15 +375,31 @@ export default function RockDodgerTestScreen() {
                survivalTime >= 20 ? 'Good performance!' : 
                survivalTime >= 10 ? 'Not bad!' : 'Keep practicing!'}
             </ThemedText>
-            <TouchableOpacity 
-              style={[styles.startButton, { backgroundColor: tintColor }]} 
-              onPress={handlePlayAgain}
-            >
-              <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
-              <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
-            </TouchableOpacity>
+            {params.sequence === 'all-seven' ? (
+              <>
+                <TouchableOpacity 
+                  style={[styles.startButton, { backgroundColor: tintColor }]} 
+                  onPress={handleNextTestOrFinish}
+                >
+                  <ThemedText style={styles.startButtonText}>Next Test</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+                  <ThemedText style={styles.backButtonText}>Exit Test Battery</ThemedText>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity 
+                  style={[styles.startButton, { backgroundColor: tintColor }]} 
+                  onPress={handlePlayAgain}
+                >
+                  <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+                  <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
+                </TouchableOpacity>
+              </>
+            )}
           </ThemedView>
         </ScrollView>
       </ThemedView>

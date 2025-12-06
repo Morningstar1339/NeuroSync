@@ -166,11 +166,15 @@ export const generateTestData = async (supplementCount: number = 10, logsPerSupp
       }
       
     } catch (error) {
-      // Skip if supplement already exists
-      if (!error.message?.includes('UNIQUE constraint failed')) {
-        console.error('Error creating test supplement:', error);
-      }
+  if (error instanceof Error) {
+    if (!error.message.includes('UNIQUE constraint failed')) {
+      // ...
     }
+  } else {
+    console.error('Unknown error in performance handler:', error);
+  }
+}
+
   }
   
   // Generate some cognitive test results
@@ -216,11 +220,15 @@ export const generateTestData = async (supplementCount: number = 10, logsPerSupp
         );
       }
     } catch (error) {
-      // Skip if symptom already exists
-      if (!error.message?.includes('UNIQUE constraint failed')) {
-        console.error('Error creating test symptom:', error);
-      }
+  if (error instanceof Error) {
+    if (!error.message.includes('UNIQUE constraint failed')) {
+      // ...
     }
+  } else {
+    console.error('Unknown error in performance handler:', error);
+  }
+}
+
   }
   
   console.log('Test data generation complete!');

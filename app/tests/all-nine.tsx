@@ -6,12 +6,12 @@ import { useRouter } from 'expo-router';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { Ionicons } from '@expo/vector-icons';
 
-export default function AllNineTestsScreen() {
+export default function AllTestsScreen() {
   const router = useRouter();
   const tintColor = useThemeColor({}, 'tint');
 
   const handleStartSequence = () => {
-    router.push('/tests/reflexes?sequence=all-nine');
+    router.push('/tests/reflexes?sequence=all-seven');
   };
 
   const handleBackToMenu = () => {
@@ -30,14 +30,14 @@ export default function AllNineTestsScreen() {
       id: 'memory',
       name: 'Memory Test',
       icon: 'grid-outline',
-      duration: '60 seconds',
+      duration: '~60 seconds',
       description: 'Match card pairs',
     },
     {
       id: 'connections',
       name: 'Connections Test',
       icon: 'git-network-outline',
-      duration: '60 seconds',
+      duration: 'Until complete',
       description: 'Connect dots optimally',
     },
     {
@@ -55,25 +55,11 @@ export default function AllNineTestsScreen() {
       description: 'Working memory and logic',
     },
     {
-      id: 'melody-repeater',
-      name: 'Melody Repeater',
-      icon: 'musical-notes-outline',
-      duration: 'Until failure',
-      description: 'Auditory memory test',
-    },
-    {
       id: 'tile-puzzle',
       name: '8-Tile Puzzle',
-      icon: 'grid-outline',
+      icon: 'apps-outline',
       duration: 'Until solved',
       description: 'Spatial reasoning test',
-    },
-    {
-      id: 'trail-maker',
-      name: 'Ball Counting',
-      icon: 'basketball-outline',
-      duration: '15 seconds',
-      description: 'Count bouncing balls',
     },
     {
       id: 'n-back',
@@ -95,14 +81,14 @@ export default function AllNineTestsScreen() {
         >
           <Ionicons name="arrow-back-outline" size={24} color={tintColor} />
         </TouchableOpacity>
-        <ThemedText type="title" style={styles.title}>All 9 Tests</ThemedText>
+        <ThemedText type="title" style={styles.title}>All 7 Tests</ThemedText>
         <View style={styles.headerPlaceholder} />
       </ThemedView>
 
       <ThemedView style={styles.content}>
         <ThemedText style={styles.description}>
           Complete the full cognitive test battery:{'\n'}
-          All 9 tests measuring different cognitive abilities
+          All 7 tests measuring different cognitive abilities
         </ThemedText>
 
         <View style={styles.sequenceContainer}>
@@ -134,7 +120,7 @@ export default function AllNineTestsScreen() {
         <View style={styles.infoBox}>
           <Ionicons name="time-outline" size={20} color={tintColor} style={styles.infoIcon} />
           <ThemedText style={styles.infoText}>
-            Estimated total time: 15-25 minutes{'\n'}
+            Estimated total time: 10-20 minutes{'\n'}
             You can take breaks between tests if needed.
           </ThemedText>
         </View>
@@ -214,7 +200,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     marginBottom: 20,
-    maxHeight: 400,
   },
   testItem: {
     marginBottom: 12,

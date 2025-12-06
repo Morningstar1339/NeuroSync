@@ -10,7 +10,6 @@ import {
   isDatabaseInitialized, 
   isFallbackMode, 
   getDatabaseStatus,
-  initializeDatabaseSafely,
   initializeDatabaseWithRetry,
   resetDatabaseState,
   checkStoragePermissions,
@@ -91,7 +90,7 @@ export default function DatabaseDebugScreen() {
     }
   }, [autoRefresh]);
 
-  const updateAccessLogAndHealth = () => {
+  const updateAccessLogAndHealth = useCallback(() => {
     const fullLog = getDatabaseAccessLog();
     setAccessLog(fullLog); // Show ALL entries, not just last 50
     setHealth(checkDatabaseHealth());
@@ -108,11 +107,11 @@ export default function DatabaseDebugScreen() {
         !testSessionStartTime || entry.timestamp >= testSessionStartTime
       );
     }
-  };
+  }, [isTestMode, testSessionStartTime]);
 
   useEffect(() => {
     updateAccessLogAndHealth();
-  }, []);
+  }, [updateAccessLogAndHealth]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -122,7 +121,7 @@ export default function DatabaseDebugScreen() {
     }, 1000); // Update every second
 
     return () => clearInterval(interval);
-  }, [autoRefresh]);
+  }, [autoRefresh, updateAccessLogAndHealth]);
 
   const handleClearAccessLog = () => {
     clearAccessLog();
@@ -320,13 +319,14 @@ export default function DatabaseDebugScreen() {
       info.lastOperationAttempted = 'Checking storage permissions';
       try {
         const permissions = await checkStoragePermissions();
-        info.storagePermissions = permissions.hasPermissions;
-        info.testFileCreated = permissions.canWrite;
-        
-        if (permissions.error) {
-          info.initializationErrors.push(`Storage permissions: ${permissions.error}`);
+        info.storagePermissions = permissions.granted;
+        // For now, we’ll treat "can write" as "has storage permissions"
+        info.testFileCreated = permissions.granted;
+
+        if (permissions.reason) {
+          info.initializationErrors.push(`Storage permissions: ${permissions.reason}`);
         }
-        
+
         console.log(`DATABASE DEBUG: Storage permissions: ${info.storagePermissions}, can write: ${info.testFileCreated}`);
       } catch (error) {
         info.initializationErrors.push(`Storage permission check failed: ${error}`);
@@ -845,7 +845,7 @@ export default function DatabaseDebugScreen() {
           </ScrollView>
         </ThemedView>
 
-        {/* Test Functions */}
+        {/* Database Tests */}
         <ThemedView style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Database Tests</ThemedText>
           

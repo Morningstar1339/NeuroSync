@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -30,7 +30,7 @@ SplashScreen.preventAutoHideAsync().catch((error) => {
 });
 
 // Database connection keep-alive interval
-let keepAliveInterval: NodeJS.Timeout | null = null;
+let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
 
 // Start periodic connection refresh every 5 minutes
 const startDatabaseKeepAlive = () => {
@@ -49,7 +49,7 @@ const startDatabaseKeepAlive = () => {
     } catch (error) {
       console.log('[KEEPALIVE] Connection check failed:', error);
     }
-  }, 5 * 60 * 1000) as NodeJS.Timeout; // Every 5 minutes
+  }, 5 * 60 * 1000); // Every 5 minutes
   
   console.log('✅ Database keep-alive started (5 minute intervals)');
 };
@@ -69,40 +69,11 @@ export default function RootLayout() {
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [retryCount, setRetryCount] = useState(0);
 
-  useEffect(() => {
-    initializeApp();
-  }, []);
-
-  // React lifecycle logging
-  useEffect(() => {
-    console.log('🟢 APP MOUNTED');
-    return () => {
-      console.log('🔴 APP UNMOUNTING');
-      stopDatabaseKeepAlive(); // Clean up keep-alive interval
-    };
-  }, []);
-
-  // App state change logging
-  useEffect(() => {
-    const subscription = RNAppState.addEventListener('change', (nextAppState) => {
-      console.log('🔄 APP STATE CHANGED:', nextAppState);
-      // Check database state when app state changes
-      console.log('DB status after state change:', checkDatabaseHealth());
-    });
-    
-    return () => subscription.remove();
-  }, []);
-
-  // Memory pressure logging
-  useEffect(() => {
-    const subscription = RNAppState.addEventListener('memoryWarning', () => {
-      console.log('⚠️ MEMORY WARNING RECEIVED');
-      console.log('DB status during memory warning:', checkDatabaseHealth());
-    });
-    return () => subscription.remove();
-  }, []);
-
-  const initializeApp = async () => {
+  /**
+   * Main app initialization routine.
+   * Wrapped in useCallback so we can safely put it in useEffect deps.
+   */
+  const initializeApp = useCallback(async () => {
     console.log('🚀 [INIT] Starting app initialization...');
     console.log(`🚀 [INIT] Build type: ${isStandaloneBuild() ? 'STANDALONE' : 'DEVELOPMENT'}`);
     
@@ -113,7 +84,7 @@ export default function RootLayout() {
       if (isStandaloneBuild()) {
         // PRODUCTION BUILD: Use synchronous blocking initialization
         console.log('🏭 [INIT] Production build detected - using synchronous initialization');
-        await initializeProductionBuild();
+        await initializeProductionBuild(retryCount);
       } else {
         // DEVELOPMENT BUILD: Use existing async initialization
         console.log('🔧 [INIT] Development build detected - using async initialization');
@@ -144,151 +115,41 @@ export default function RootLayout() {
         console.warn('⚠️ [INIT] Failed to hide splash screen:', splashError);
       }
     }
-  };
+  }, [retryCount]);
 
-  const initializeProductionBuild = async () => {
-    console.log('🏭 [PROD-INIT] Starting production initialization with blocking approach...');
+  // Kick off initialization once, and whenever initializeApp reference changes
+  useEffect(() => {
+    initializeApp();
+  }, [initializeApp]);
+
+  // React lifecycle logging
+  useEffect(() => {
+    console.log('🟢 APP MOUNTED');
+    return () => {
+      console.log('🔴 APP UNMOUNTING');
+      stopDatabaseKeepAlive(); // Clean up keep-alive interval
+    };
+  }, []);
+
+  // App state change logging
+  useEffect(() => {
+    const subscription = RNAppState.addEventListener('change', (nextAppState) => {
+      console.log('🔄 APP STATE CHANGED:', nextAppState);
+      // Check database state when app state changes
+      console.log('DB status after state change:', checkDatabaseHealth());
+    });
     
-    // Timeout for database initialization (10 seconds)
-    const INIT_TIMEOUT = 10000;
-    let timeoutId: NodeJS.Timeout | undefined;
-    
-    try {
-      await new Promise((resolve, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(new Error('Database initialization timed out after 10 seconds'));
-        }, INIT_TIMEOUT);
+    return () => subscription.remove();
+  }, []);
 
-        try {
-          // Synchronous database initialization
-          console.log('🏭 [PROD-INIT] Step 1: Synchronous database initialization...');
-          initializeDatabase();
-          
-          // Verify database health immediately after init
-          console.log('🏭 [PROD-INIT] Step 2: Database health check...');
-          const health = checkDatabaseHealth();
-          if (!health.healthy) {
-            throw new Error(`Database health check failed: ${health.issues.join(', ')}`);
-          }
-          
-          console.log('✅ [PROD-INIT] Database initialization and health check passed');
-          resolve(true);
-        } catch (error) {
-          reject(error);
-        }
-      });
-
-      // Initialize notification manager after database is confirmed ready
-      console.log('🏭 [PROD-INIT] Step 3: Notification manager initialization...');
-      await notificationManager.initialize(true);
-      notificationManager.setDatabaseReady();
-      
-      // Start periodic database connection refresh
-      console.log('🏭 [PROD-INIT] Step 4: Starting database connection keep-alive...');
-      startDatabaseKeepAlive();
-      
-      console.log('✅ [PROD-INIT] Production initialization completed successfully');
-      
-    } catch (error) {
-      console.error('❌ [PROD-INIT] Production initialization failed:', error);
-      
-      // Write error to persistent storage for debugging
-      await writeInitializationError(error);
-      
-      throw error;
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    }
-  };
-
-  const initializeDevelopmentBuild = async () => {
-    console.log('🔧 [DEV-INIT] Starting development initialization with async approach...');
-    
-    try {
-      // Step 1: Initialize database with retry logic (existing async approach)
-      console.log('🔧 [DEV-INIT] Initializing database with retry logic...');
-      const dbResult = await initializeDatabaseWithRetry(3);
-      
-      if (!dbResult.success) {
-        throw new Error(`Database initialization failed after ${dbResult.attempts} attempts: ${dbResult.error}`);
-      }
-      
-      console.log(`🔧 [DEV-INIT] Database initialized successfully on attempt ${dbResult.attempts}`);
-
-      // Step 2: Initialize notification manager with database ready
-      console.log('🔧 [DEV-INIT] Initializing notification manager...');
-      await notificationManager.initialize(true);
-      notificationManager.setDatabaseReady();
-      
-      // Step 3: Start periodic database connection refresh
-      console.log('🔧 [DEV-INIT] Starting database connection keep-alive...');
-      startDatabaseKeepAlive();
-      
-      console.log('✅ [DEV-INIT] Development initialization completed successfully');
-      
-    } catch (error) {
-      console.error('❌ [DEV-INIT] Development initialization failed:', error);
-      throw error;
-    }
-  };
-
-  const writeInitializationError = async (error: any) => {
-    try {
-      console.log('📝 [ERROR-LOG] Writing initialization error to persistent storage...');
-      
-      const errorLog = {
-        timestamp: new Date().toISOString(),
-        buildType: isStandaloneBuild() ? 'standalone' : 'development',
-        executionEnvironment: Constants.executionEnvironment,
-        platform: Constants.platform,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        health: checkDatabaseHealth(),
-        retryCount: retryCount,
-        appVersion: Constants.expoConfig?.version || 'unknown',
-        runtimeVersion: Constants.expoConfig?.runtimeVersion || 'unknown'
-      };
-
-      // Write to persistent storage
-      const errorLogKey = `db_init_error_${Date.now()}`;
-      await AsyncStorage.setItem(errorLogKey, JSON.stringify(errorLog));
-      
-      // Keep only the last 10 error logs to prevent storage bloat
-      await cleanupOldErrorLogs();
-      
-      console.error('📝 [ERROR-LOG] Error written to AsyncStorage with key:', errorLogKey);
-      console.error('📝 [ERROR-LOG] Error details:', JSON.stringify(errorLog, null, 2));
-    } catch (logError) {
-      console.error('❌ [ERROR-LOG] Failed to write error log to AsyncStorage:', logError);
-      // Fallback to console-only logging
-      console.error('📝 [ERROR-LOG-FALLBACK] Initialization error details:', {
-        timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined
-      });
-    }
-  };
-
-  const cleanupOldErrorLogs = async () => {
-    try {
-      const keys = await AsyncStorage.getAllKeys();
-      const errorLogKeys = keys
-        .filter(key => key.startsWith('db_init_error_'))
-        .sort()
-        .reverse(); // Most recent first
-
-      // Keep only the last 10 error logs
-      if (errorLogKeys.length > 10) {
-        const keysToDelete = errorLogKeys.slice(10);
-        await AsyncStorage.multiRemove(keysToDelete);
-        console.log(`📝 [ERROR-LOG] Cleaned up ${keysToDelete.length} old error logs`);
-      }
-    } catch (cleanupError) {
-      console.warn('⚠️ [ERROR-LOG] Failed to cleanup old error logs:', cleanupError);
-    }
-  };
+  // Memory pressure logging
+  useEffect(() => {
+    const subscription = RNAppState.addEventListener('memoryWarning', () => {
+      console.log('⚠️ MEMORY WARNING RECEIVED');
+      console.log('DB status during memory warning:', checkDatabaseHealth());
+    });
+    return () => subscription.remove();
+  }, []);
 
   const handleRetry = async () => {
     const newRetryCount = retryCount + 1;
@@ -435,6 +296,163 @@ export default function RootLayout() {
   );
 }
 
+/**
+ * Production initialization – pure helper outside the component.
+ * Takes retryCount as an arg so it doesn't close over component state.
+ */
+async function initializeProductionBuild(retryCount: number) {
+  console.log('🏭 [PROD-INIT] Starting production initialization with blocking approach...');
+  
+  // Timeout for database initialization (10 seconds)
+  const INIT_TIMEOUT = 10000;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  
+  try {
+    await new Promise((resolve, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error('Database initialization timed out after 10 seconds'));
+      }, INIT_TIMEOUT);
+
+      try {
+        // Synchronous database initialization
+        console.log('🏭 [PROD-INIT] Step 1: Synchronous database initialization...');
+        initializeDatabase();
+        
+        // Verify database health immediately after init
+        console.log('🏭 [PROD-INIT] Step 2: Database health check...');
+        const health = checkDatabaseHealth();
+        if (!health.healthy) {
+          throw new Error(`Database health check failed: ${health.issues.join(', ')}`);
+        }
+        
+        console.log('✅ [PROD-INIT] Database initialization and health check passed');
+        resolve(true);
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    // Initialize notification manager after database is confirmed ready
+    console.log('🏭 [PROD-INIT] Step 3: Notification manager initialization...');
+    await notificationManager.initialize(true);
+    notificationManager.setDatabaseReady();
+    
+    // Start periodic database connection refresh
+    console.log('🏭 [PROD-INIT] Step 4: Starting database connection keep-alive...');
+    startDatabaseKeepAlive();
+    
+    console.log('✅ [PROD-INIT] Production initialization completed successfully');
+    
+  } catch (error) {
+    console.error('❌ [PROD-INIT] Production initialization failed:', error);
+    
+    // Write error to persistent storage for debugging
+    await writeInitializationError(error, retryCount);
+    
+    throw error;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+/**
+ * Development initialization – pure helper outside the component.
+ */
+async function initializeDevelopmentBuild() {
+  console.log('🔧 [DEV-INIT] Starting development initialization with async approach...');
+  
+  try {
+    // Step 1: Initialize database with retry logic (existing async approach)
+    console.log('🔧 [DEV-INIT] Initializing database with retry logic...');
+    const dbResult = await initializeDatabaseWithRetry(3);
+    
+    if (!dbResult.success) {
+      throw new Error(`Database initialization failed after ${dbResult.attempts} attempts: ${dbResult.error}`);
+    }
+    
+    console.log(`🔧 [DEV-INIT] Database initialized successfully on attempt ${dbResult.attempts}`);
+
+    // Step 2: Initialize notification manager with database ready
+    console.log('🔧 [DEV-INIT] Initializing notification manager...');
+    await notificationManager.initialize(true);
+    notificationManager.setDatabaseReady();
+    
+    // Step 3: Start periodic database connection refresh
+    console.log('🔧 [DEV-INIT] Starting database connection keep-alive...');
+    startDatabaseKeepAlive();
+    
+    console.log('✅ [DEV-INIT] Development initialization completed successfully');
+    
+  } catch (error) {
+    console.error('❌ [DEV-INIT] Development initialization failed:', error);
+    throw error;
+  }
+}
+
+/**
+ * Error logging helper – outside component, takes retryCount explicitly.
+ */
+async function writeInitializationError(error: any, retryCount: number) {
+  try {
+    console.log('📝 [ERROR-LOG] Writing initialization error to persistent storage...');
+    
+    const errorLog = {
+      timestamp: new Date().toISOString(),
+      buildType: isStandaloneBuild() ? 'standalone' : 'development',
+      executionEnvironment: Constants.executionEnvironment,
+      platform: Constants.platform,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      health: checkDatabaseHealth(),
+      retryCount,
+      appVersion: Constants.expoConfig?.version || 'unknown',
+      runtimeVersion: Constants.expoConfig?.runtimeVersion || 'unknown'
+    };
+
+    // Write to persistent storage
+    const errorLogKey = `db_init_error_${Date.now()}`;
+    await AsyncStorage.setItem(errorLogKey, JSON.stringify(errorLog));
+    
+    // Keep only the last 10 error logs to prevent storage bloat
+    await cleanupOldErrorLogs();
+    
+    console.error('📝 [ERROR-LOG] Error written to AsyncStorage with key:', errorLogKey);
+    console.error('📝 [ERROR-LOG] Error details:', JSON.stringify(errorLog, null, 2));
+  } catch (logError) {
+    console.error('❌ [ERROR-LOG] Failed to write error log to AsyncStorage:', logError);
+    // Fallback to console-only logging
+    console.error('📝 [ERROR-LOG-FALLBACK] Initialization error details:', {
+      timestamp: new Date().toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+  }
+}
+
+/**
+ * Clean up old error logs – pure helper.
+ */
+async function cleanupOldErrorLogs() {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const errorLogKeys = keys
+      .filter(key => key.startsWith('db_init_error_'))
+      .sort()
+      .reverse(); // Most recent first
+
+    // Keep only the last 10 error logs
+    if (errorLogKeys.length > 10) {
+      const keysToDelete = errorLogKeys.slice(10);
+      await AsyncStorage.multiRemove(keysToDelete);
+      console.log(`📝 [ERROR-LOG] Cleaned up ${keysToDelete.length} old error logs`);
+    }
+  } catch (cleanupError) {
+    console.warn('⚠️ [ERROR-LOG] Failed to cleanup old error logs:', cleanupError);
+  }
+}
+
 const styles = StyleSheet.create({
   centerContainer: {
     flex: 1,
@@ -481,6 +499,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     marginBottom: 24,
+    justifyContent: 'center',
   },
   retryButton: {
     backgroundColor: '#007AFF',

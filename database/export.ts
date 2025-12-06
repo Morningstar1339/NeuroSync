@@ -169,6 +169,8 @@ export const exportCognitiveTestResults = async (options?: ExportOptions): Promi
       ctr.test_type,
       ctr.timestamp,
       ctr.score,
+      ctr.accuracy,
+      ctr.speed,
       ctr.raw_data,
       ctr.study_id,
       ctr.supplement_log_id,

@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { StyleSheet, TouchableOpacity, View, Dimensions, Alert, ScrollView } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
@@ -23,6 +23,7 @@ interface Ball {
 
 export default function PatternMatcherTestScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
   
   const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
@@ -76,15 +77,6 @@ export default function PatternMatcherTestScreen() {
 
   // Removed isPatternComplete as it's now handled directly in updateMatchCount
 
-  const updateMatchCount = () => {
-    const matches = checkMatches(playerRack, targetPattern);
-    setMatchCount(matches);
-    
-    if (matches === 5) {
-      endGame();
-    }
-  };
-
   const handleBallPress = (position: number) => {
     if (selectedPosition === null) {
       // First tap - select the ball
@@ -113,7 +105,7 @@ export default function PatternMatcherTestScreen() {
   const startGame = async () => {
     try {
       const activeSession = await isUserInActiveTestSession();
-      if (activeSession.isActive && activeSession.activeTest?.test_type !== 'pattern_matcher') {
+if (activeSession.isActive && String(activeSession.activeTest?.test_type) !== 'pattern_matcher') {
         Alert.alert(
           'Test Session Active',
           `You have an active ${activeSession.activeTest?.test_type} test (${Math.ceil(activeSession.timeRemaining || 0)}s remaining). Starting another test may affect your results.\n\nContinue anyway?`,
@@ -143,16 +135,21 @@ export default function PatternMatcherTestScreen() {
     startTime.current = Date.now();
   };
 
-  const endGame = async () => {
+const endGame = useCallback(async () => {
     setGameState('finished');
     
     const completionTime = (Date.now() - startTime.current) / 1000;
+    
+    const accuracy = 1.0;
+    const speed = completionTime;
     
     const rawData = {
       completionTime,
       swapCount,
       patternColors: targetPattern.map(ball => ball.colorName),
-      finalMatches: 5
+      finalMatches: 5,
+      accuracy,
+      speed
     };
     
     try {
@@ -160,7 +157,7 @@ export default function PatternMatcherTestScreen() {
       const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
       
       const score = Math.max(0, Math.floor(100 - (swapCount * 2) - (completionTime / 2)));
-      await saveCognitiveTestResult('pattern_matcher', score, rawData, completionTime, studyId, supplementLogId);
+      await saveCognitiveTestResult('pattern_matcher', score, rawData, completionTime, studyId, supplementLogId, accuracy, speed);
       
       if (scheduledTest) {
         await completeScheduledTest(scheduledTest.id);
@@ -168,10 +165,22 @@ export default function PatternMatcherTestScreen() {
     } catch (error) {
       console.error('Failed to save pattern matcher test result:', error);
     }
-  };
+}, [scheduledTest, studyContext, swapCount, targetPattern]);
 
   const handleBackToMenu = () => {
-    router.push('/cognitive-tests');
+    if (params.sequence === 'all-seven') {
+      router.push('/tests/all-nine');
+    } else {
+      router.push('/cognitive-tests');
+    }
+  };
+
+  const handleNextTestOrFinish = () => {
+    if (params.sequence === 'all-seven') {
+      router.push('/tests/tile-puzzle?sequence=all-seven');
+    } else {
+      router.push('/cognitive-tests');
+    }
   };
 
   const handlePlayAgain = () => {
@@ -182,7 +191,7 @@ export default function PatternMatcherTestScreen() {
     const checkTestStatus = async () => {
       try {
         const activeSession = await isUserInActiveTestSession();
-        if (activeSession.isActive && activeSession.activeTest?.test_type !== 'pattern_matcher') {
+        if (activeSession.isActive && String(activeSession.activeTest?.test_type) !== 'pattern_matcher') {
           setActiveTestSession(activeSession);
         }
         
@@ -210,7 +219,7 @@ export default function PatternMatcherTestScreen() {
         endGame();
       }
     }
-  }, [playerRack, targetPattern]);
+  }, [endGame, playerRack, targetPattern]);
 
   if (gameState === 'ready') {
     return (
@@ -263,7 +272,8 @@ export default function PatternMatcherTestScreen() {
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.resultsContainer}>
             <ThemedText type="title" style={styles.title}>Pattern Solved!</ThemedText>
-            <ThemedText style={styles.finalScore}>Completion Time: {completionTime.toFixed(1)}s</ThemedText>
+            <ThemedText style={styles.finalScore}>Pattern Matched!</ThemedText>
+            <ThemedText style={styles.metricText}>Accuracy: 100% | Speed: {completionTime.toFixed(1)}s</ThemedText>
             <ThemedText style={styles.metricText}>Total Swaps: {swapCount}</ThemedText>
             <ThemedText style={styles.metricText}>Pattern: {targetPattern.map(b => b.colorName).join(', ')}</ThemedText>
             <ThemedText style={styles.resultMessage}>
@@ -271,15 +281,31 @@ export default function PatternMatcherTestScreen() {
                swapCount <= 15 ? 'Good logical thinking!' : 
                swapCount <= 25 ? 'Nice work!' : 'Keep practicing!'}
             </ThemedText>
-            <TouchableOpacity 
-              style={[styles.startButton, { backgroundColor: tintColor }]} 
-              onPress={handlePlayAgain}
-            >
-              <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
-              <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
-            </TouchableOpacity>
+            {params.sequence === 'all-seven' ? (
+              <>
+                <TouchableOpacity 
+                  style={[styles.startButton, { backgroundColor: tintColor }]} 
+                  onPress={handleNextTestOrFinish}
+                >
+                  <ThemedText style={styles.startButtonText}>Next Test</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+                  <ThemedText style={styles.backButtonText}>Exit Test Battery</ThemedText>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity 
+                  style={[styles.startButton, { backgroundColor: tintColor }]} 
+                  onPress={handlePlayAgain}
+                >
+                  <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+                  <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
+                </TouchableOpacity>
+              </>
+            )}
           </ThemedView>
         </ScrollView>
       </ThemedView>

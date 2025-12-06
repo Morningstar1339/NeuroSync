@@ -3,7 +3,7 @@ import { StyleSheet, TouchableOpacity, View, Dimensions, Alert, ScrollView } fro
 import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
@@ -32,6 +32,7 @@ interface Trial {
 
 export default function NBackTestScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
   
   const [gameState, setGameState] = useState<'ready' | 'instructions' | 'playing' | 'finished'>('ready');
@@ -155,7 +156,7 @@ export default function NBackTestScreen() {
     
     try {
       const activeSession = await isUserInActiveTestSession();
-      if (activeSession.isActive && activeSession.activeTest?.test_type !== 'n_back') {
+      if (activeSession.isActive && String(activeSession.activeTest?.test_type) !== 'n_back') {
         Alert.alert(
           'Test Session Active',
           `You have an active ${activeSession.activeTest?.test_type} test (${Math.ceil(activeSession.timeRemaining || 0)}s remaining). Starting another test may affect your results.\n\nContinue anyway?`,
@@ -214,6 +215,8 @@ export default function NBackTestScreen() {
       ? hitResponseTimes.reduce((sum, h) => sum + h.responseTime!, 0) / hitResponseTimes.length
       : 0;
     
+    const speed = averageHitResponseTime;
+    
     const rawData = {
       accuracy,
       hits: hits.length,
@@ -223,10 +226,10 @@ export default function NBackTestScreen() {
       averageResponseTime,
       averageHitResponseTime,
       dPrime,
-      trials: trials
+      trials: trials,
+      speed
     };
     
-    // Save test result with graceful error handling
     const saveTestResult = async () => {
       try {
         console.log('🔄 N-BACK TEST: Saving test result...');
@@ -234,7 +237,7 @@ export default function NBackTestScreen() {
         const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
         
         const score = Math.floor(accuracy * 100);
-        await saveCognitiveTestResult('n_back', score, rawData, undefined, studyId, supplementLogId);
+        await saveCognitiveTestResult('n_back', score, rawData, undefined, studyId, supplementLogId, accuracy, speed);
         
         if (scheduledTest) {
           await completeScheduledTest(scheduledTest.id);
@@ -290,6 +293,14 @@ export default function NBackTestScreen() {
   };
 
   const handleBackToMenu = () => {
+    if (params.sequence === 'all-seven') {
+      router.push('/tests/all-nine');
+    } else {
+      router.push('/cognitive-tests');
+    }
+  };
+
+  const handleFinishBattery = () => {
     router.push('/cognitive-tests');
   };
 
@@ -301,7 +312,7 @@ export default function NBackTestScreen() {
     const checkTestStatus = async () => {
       try {
         const activeSession = await isUserInActiveTestSession();
-        if (activeSession.isActive && activeSession.activeTest?.test_type !== 'n_back') {
+        if (activeSession.isActive && String(activeSession.activeTest?.test_type) !== 'n_back') {
           setActiveTestSession(activeSession);
         }
         
@@ -410,7 +421,8 @@ export default function NBackTestScreen() {
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.resultsContainer}>
             <ThemedText type="title" style={styles.title}>Test Complete!</ThemedText>
-            <ThemedText style={styles.finalScore}>Accuracy: {(accuracy * 100).toFixed(1)}%</ThemedText>
+            <ThemedText style={styles.finalScore}>Test Complete!</ThemedText>
+            <ThemedText style={styles.metricText}>Accuracy: {(accuracy * 100).toFixed(1)}% | Speed: {averageHitResponseTime.toFixed(0)}ms</ThemedText>
             <ThemedText style={styles.metricText}>Hits: {hits.length}/{matches.length}</ThemedText>
             <ThemedText style={styles.metricText}>Misses: {misses.length}</ThemedText>
             <ThemedText style={styles.metricText}>False Alarms: {falseAlarms.length}</ThemedText>
@@ -424,15 +436,31 @@ export default function NBackTestScreen() {
                accuracy >= 0.65 ? 'Good cognitive performance!' : 
                accuracy >= 0.5 ? 'Fair performance!' : 'Keep practicing!'}
             </ThemedText>
-            <TouchableOpacity 
-              style={[styles.startButton, { backgroundColor: tintColor }]} 
-              onPress={handlePlayAgain}
-            >
-              <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
-              <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
-            </TouchableOpacity>
+            {params.sequence === 'all-seven' ? (
+              <>
+                <TouchableOpacity 
+                  style={[styles.startButton, { backgroundColor: tintColor }]} 
+                  onPress={handleFinishBattery}
+                >
+                  <ThemedText style={styles.startButtonText}>Complete Test Battery</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+                  <ThemedText style={styles.backButtonText}>Exit Test Battery</ThemedText>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity 
+                  style={[styles.startButton, { backgroundColor: tintColor }]} 
+                  onPress={handlePlayAgain}
+                >
+                  <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+                  <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
+                </TouchableOpacity>
+              </>
+            )}
           </ThemedView>
         </ScrollView>
       </ThemedView>

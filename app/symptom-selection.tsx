@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, Modal } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, Modal, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -13,13 +13,9 @@ export default function SymptomSelectionScreen() {
   const [newSymptomText, setNewSymptomText] = useState('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadSymptoms();
-  }, [region]);
-
-  const loadSymptoms = async () => {
+const loadSymptoms = useCallback(async () => {
     if (!region) return;
-    
+
     try {
       const existingSymptoms = await getSymptomsByRegion(region);
       setSymptoms(existingSymptoms);
@@ -29,16 +25,20 @@ export default function SymptomSelectionScreen() {
     } finally {
       setLoading(false);
     }
-  };
+}, [region]);
+
+useEffect(() => {
+  loadSymptoms();
+}, [loadSymptoms]);
 
   const handleSymptomSelect = (symptom: Symptom) => {
     router.push({
       pathname: '/symptom-logging',
-      params: { 
+      params: {
         symptomId: symptom.id.toString(),
         symptomName: symptom.description,
-        region: region 
-      }
+        region: region,
+      },
     });
   };
 
@@ -54,18 +54,19 @@ export default function SymptomSelectionScreen() {
     }
 
     try {
-      const symptomId = await addSymptom(region, newSymptomText.trim());
+      const trimmed = newSymptomText.trim();
+      const symptomId = await addSymptom(region, trimmed);
       setShowAddModal(false);
       setNewSymptomText('');
-      
-      // Navigate to symptom logging with the new symptom
+
+      // Navigate directly to logging for the new symptom
       router.push({
         pathname: '/symptom-logging',
-        params: { 
+        params: {
           symptomId: symptomId.toString(),
-          symptomName: newSymptomText.trim(),
-          region: region 
-        }
+          symptomName: trimmed,
+          region: region,
+        },
       });
     } catch (error) {
       console.error('Error adding symptom:', error);
@@ -74,6 +75,7 @@ export default function SymptomSelectionScreen() {
   };
 
   const formatRegionName = (region: string) => {
+    if (!region) return '';
     return region.charAt(0).toUpperCase() + region.slice(1);
   };
 
@@ -96,34 +98,44 @@ export default function SymptomSelectionScreen() {
         </ThemedText>
       </ThemedView>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {symptoms.length > 0 && (
-          <ThemedView style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>Previously Logged Symptoms</ThemedText>
-            {symptoms.map((symptom) => (
-              <TouchableOpacity
-                key={symptom.id}
-                style={styles.symptomButton}
-                onPress={() => handleSymptomSelect(symptom)}
-              >
-                <ThemedText style={styles.symptomText}>{symptom.description}</ThemedText>
-              </TouchableOpacity>
-            ))}
+      <ScrollView
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {symptoms.length === 0 ? (
+          <ThemedView style={styles.emptyStateContainer}>
+            <ThemedText style={styles.emptyStateTitle}>No symptoms yet</ThemedText>
+            <ThemedText style={styles.emptyStateSubtitle}>
+              Add your first symptom for this region.
+            </ThemedText>
           </ThemedView>
+        ) : (
+          symptoms.map((symptom) => (
+            <TouchableOpacity
+              key={symptom.id}
+              style={styles.symptomButton}
+              onPress={() => handleSymptomSelect(symptom)}
+            >
+              <ThemedText style={styles.symptomText}>
+                {symptom.description}
+              </ThemedText>
+            </TouchableOpacity>
+          ))
         )}
 
-        <ThemedView style={styles.section}>
+        <ThemedView style={styles.addNewSection}>
           <TouchableOpacity
             style={styles.addNewButton}
             onPress={() => setShowAddModal(true)}
           >
-            <ThemedText style={styles.addNewText}>+ Add New Custom Symptom</ThemedText>
+            <ThemedText style={styles.addNewText}>+ Add New Symptom</ThemedText>
           </TouchableOpacity>
         </ThemedView>
       </ScrollView>
 
-      <TouchableOpacity 
-        style={styles.backButton} 
+      <TouchableOpacity
+        style={styles.backButton}
         onPress={() => router.back()}
       >
         <ThemedText style={styles.backButtonText}>Back to Body Diagram</ThemedText>
@@ -133,27 +145,25 @@ export default function SymptomSelectionScreen() {
       <Modal
         visible={showAddModal}
         animationType="slide"
-        transparent={true}
+        transparent
         onRequestClose={() => setShowAddModal(false)}
       >
         <ThemedView style={styles.modalOverlay}>
           <ThemedView style={styles.modalContent}>
             <ThemedText style={styles.modalTitle}>Add New Symptom</ThemedText>
             <ThemedText style={styles.modalSubtitle}>
-              Describe the symptom for {formatRegionName(region || '')}
+              Use a short phrase that will be easy to recognize later.
             </ThemedText>
-            
+
             <TextInput
               style={styles.textInput}
+              placeholder="e.g. Sharp pain behind right eye"
+              placeholderTextColor="#999"
               value={newSymptomText}
               onChangeText={setNewSymptomText}
-              placeholder="e.g., Headache, Sharp pain, Numbness..."
-              placeholderTextColor="#8E8E93"
-              multiline={false}
-              autoFocus={true}
             />
 
-            <ThemedView style={styles.modalButtons}>
+            <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={() => {
@@ -170,7 +180,7 @@ export default function SymptomSelectionScreen() {
               >
                 <ThemedText style={styles.addButtonText}>Add Symptom</ThemedText>
               </TouchableOpacity>
-            </ThemedView>
+            </View>
           </ThemedView>
         </ThemedView>
       </Modal>
@@ -181,57 +191,63 @@ export default function SymptomSelectionScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 16,
   },
   header: {
     alignItems: 'center',
-    marginTop: 40,
-    marginBottom: 20,
+    marginBottom: 16,
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   subtitle: {
-    fontSize: 16,
-    textAlign: 'center',
+    fontSize: 14,
     opacity: 0.7,
+    textAlign: 'center',
   },
-  scrollView: {
+  list: {
     flex: 1,
-    marginVertical: 20,
   },
-  section: {
-    marginBottom: 24,
+  listContent: {
+    paddingBottom: 24,
   },
-  sectionTitle: {
+  emptyStateContainer: {
+    alignItems: 'center',
+    paddingVertical: 32,
+  },
+  emptyStateTitle: {
     fontSize: 18,
     fontWeight: '600',
-    marginBottom: 12,
-    opacity: 0.8,
+    marginBottom: 6,
+  },
+  emptyStateSubtitle: {
+    fontSize: 14,
+    opacity: 0.7,
+    textAlign: 'center',
   },
   symptomButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 8,
-    marginBottom: 8,
-    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    marginBottom: 10,
   },
   symptomText: {
-    color: 'white',
     fontSize: 16,
-    fontWeight: '500',
+  },
+  addNewSection: {
+    marginTop: 16,
   },
   addNewButton: {
-    backgroundColor: '#34C759',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    backgroundColor: '#30B454',
+    paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#30B454',
   },
   addNewText: {
     color: 'white',
@@ -239,12 +255,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   backButton: {
+    marginTop: 12,
     backgroundColor: '#8E8E93',
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 8,
     alignItems: 'center',
-    marginTop: 10,
   },
   backButtonText: {
     color: 'white',
@@ -253,24 +269,20 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
-    alignItems: 'center',
     padding: 20,
   },
   modalContent: {
     backgroundColor: 'white',
-    borderRadius: 12,
-    padding: 24,
-    width: '100%',
-    maxWidth: 400,
+    borderRadius: 16,
+    padding: 20,
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: 'bold',
-    textAlign: 'center',
+    fontWeight: '700',
     marginBottom: 8,
-    color: '#000',
+    textAlign: 'center',
   },
   modalSubtitle: {
     fontSize: 14,

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, TouchableOpacity, View, Dimensions, Alert, ScrollView } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
@@ -15,6 +15,7 @@ type PuzzleState = (number | null)[][];
 
 export default function TilePuzzleTestScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
   
   const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
@@ -158,7 +159,7 @@ export default function TilePuzzleTestScreen() {
   const startGame = async () => {
     try {
       const activeSession = await isUserInActiveTestSession();
-      if (activeSession.isActive && activeSession.activeTest?.test_type !== 'tile_puzzle') {
+      if (activeSession.isActive && String(activeSession.activeTest?.test_type) !== 'tile_puzzle') {
         Alert.alert(
           'Test Session Active',
           `You have an active ${activeSession.activeTest?.test_type} test (${Math.ceil(activeSession.timeRemaining || 0)}s remaining). Starting another test may affect your results.\n\nContinue anyway?`,
@@ -198,13 +199,18 @@ export default function TilePuzzleTestScreen() {
     
     const efficiency = solved && moves > 0 ? optimalMoves / moves : 0;
     
+    const accuracy = solved ? efficiency : 0;
+    const speed = finalCompletionTime;
+    
     const rawData = {
-      completion_time: finalCompletionTime, // Always track time
+      completion_time: finalCompletionTime,
       total_moves: moves,
       optimal_moves: optimalMoves,
       gave_up: !solved,
       solved,
-      efficiency
+      efficiency,
+      accuracy,
+      speed
     };
     
     try {
@@ -212,7 +218,7 @@ export default function TilePuzzleTestScreen() {
       const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
       
       const score = solved ? Math.floor(efficiency * 100) : 0;
-      await saveCognitiveTestResult('tile_puzzle', score, rawData, finalCompletionTime, studyId, supplementLogId);
+      await saveCognitiveTestResult('tile_puzzle', score, rawData, finalCompletionTime, studyId, supplementLogId, accuracy, speed);
       
       if (scheduledTest) {
         await completeScheduledTest(scheduledTest.id);
@@ -237,7 +243,19 @@ export default function TilePuzzleTestScreen() {
   };
 
   const handleBackToMenu = () => {
-    router.push('/cognitive-tests');
+    if (params.sequence === 'all-seven') {
+      router.push('/tests/all-nine');
+    } else {
+      router.push('/cognitive-tests');
+    }
+  };
+
+  const handleNextTestOrFinish = () => {
+    if (params.sequence === 'all-seven') {
+      router.push('/tests/n-back?sequence=all-seven');
+    } else {
+      router.push('/cognitive-tests');
+    }
   };
 
   const handlePlayAgain = () => {
@@ -248,7 +266,7 @@ export default function TilePuzzleTestScreen() {
     const checkTestStatus = async () => {
       try {
         const activeSession = await isUserInActiveTestSession();
-        if (activeSession.isActive && activeSession.activeTest?.test_type !== 'tile_puzzle') {
+        if (activeSession.isActive && String(activeSession.activeTest?.test_type) !== 'tile_puzzle') {
           setActiveTestSession(activeSession);
         }
         
@@ -319,7 +337,7 @@ export default function TilePuzzleTestScreen() {
             <ThemedText type="title" style={styles.title}>
               {wasSolved ? 'Puzzle Solved!' : 'Game Over'}
             </ThemedText>
-            <ThemedText style={styles.metricText}>Completion Time: {completionTime.toFixed(1)}s</ThemedText>
+            <ThemedText style={styles.metricText}>Accuracy: {(efficiency * 100).toFixed(1)}% | Speed: {completionTime.toFixed(1)}s</ThemedText>
             <ThemedText style={styles.metricText}>Total Moves: {moves}</ThemedText>
             <ThemedText style={styles.metricText}>Optimal Moves: {optimalMoves}</ThemedText>
             {wasSolved && (
@@ -330,15 +348,31 @@ export default function TilePuzzleTestScreen() {
                wasSolved && efficiency >= 60 ? 'Great problem solving!' : 
                wasSolved ? 'Good work!' : 'Keep practicing!'}
             </ThemedText>
-            <TouchableOpacity 
-              style={[styles.startButton, { backgroundColor: tintColor }]} 
-              onPress={handlePlayAgain}
-            >
-              <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
-              <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
-            </TouchableOpacity>
+            {params.sequence === 'all-seven' ? (
+              <>
+                <TouchableOpacity 
+                  style={[styles.startButton, { backgroundColor: tintColor }]} 
+                  onPress={handleNextTestOrFinish}
+                >
+                  <ThemedText style={styles.startButtonText}>Next Test</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+                  <ThemedText style={styles.backButtonText}>Exit Test Battery</ThemedText>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity 
+                  style={[styles.startButton, { backgroundColor: tintColor }]} 
+                  onPress={handlePlayAgain}
+                >
+                  <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+                  <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
+                </TouchableOpacity>
+              </>
+            )}
           </ThemedView>
         </ScrollView>
       </ThemedView>

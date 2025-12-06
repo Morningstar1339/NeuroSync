@@ -35,7 +35,7 @@ export const SleepTracker: React.FC = () => {
   };
 
   // Initialize sleep detection with current settings
-  const { isTracking } = useSleepDetection(settings);
+useSleepDetection(settings);
 
   // This component doesn't render anything visible
   return null;

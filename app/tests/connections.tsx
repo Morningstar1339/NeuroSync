@@ -13,7 +13,6 @@ import { Ionicons } from '@expo/vector-icons';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const DOT_COUNT = 24;
-const TEST_DURATION = 60000; // 60 seconds
 const DOT_SIZE = 20;
 
 interface Dot {
@@ -34,19 +33,19 @@ export default function ConnectionsTestScreen() {
   const tintColor = useThemeColor({}, 'tint');
   const insets = useSafeAreaInsets();
   
-  const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
+    const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
   const [dots, setDots] = useState<Dot[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [selectedDot, setSelectedDot] = useState<number | null>(null);
-  const [timeLeft, setTimeLeft] = useState(TEST_DURATION / 1000);
+  const [elapsedTime, setElapsedTime] = useState(0);
   const [score, setScore] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
   const [optimalLength, setOptimalLength] = useState(0);
   const [scheduledTest, setScheduledTest] = useState<any>(null);
   const [studyContext, setStudyContext] = useState<any>(null);
   
-  const gameTimer = useRef<NodeJS.Timeout | null>(null);
-  const countdownTimer = useRef<NodeJS.Timeout | null>(null);
+  const elapsedTimer = useRef<number | null>(null);
+  const startTimeRef = useRef<number>(0);
 
   const generateDots = (): Dot[] => {
     const dots: Dot[] = [];
@@ -198,60 +197,23 @@ export default function ConnectionsTestScreen() {
     setConnections([]);
     setSelectedDot(null);
     setGameState('playing');
-    setTimeLeft(TEST_DURATION / 1000);
+    setElapsedTime(0);
     setScore(0);
     setIsConnected(false);
     
     const optimal = calculateMST(newDots);
     setOptimalLength(optimal);
     
-    // Start countdown timer
-    countdownTimer.current = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          endGame();
-          return 0;
-        }
-        return prev - 1;
-      });
+    startTimeRef.current = Date.now();
+    
+    elapsedTimer.current = setInterval(() => {
+      setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 1000));
     }, 1000);
-
-    // End game after duration
-    gameTimer.current = setTimeout(() => {
-      endGame();
-    }, TEST_DURATION);
   };
 
   const endGame = async () => {
     setGameState('finished');
-    if (gameTimer.current) clearTimeout(gameTimer.current);
-    if (countdownTimer.current) clearInterval(countdownTimer.current);
-    
-    // Save test result if user submitted a solution
-    if (score > 0) {
-      try {
-        const userLength = connections.reduce((sum, conn) => sum + conn.length, 0);
-        const rawData = {
-          userLength,
-          optimalLength,
-          connections: connections.length,
-          efficiency: optimalLength > 0 ? (optimalLength / userLength) * 100 : 0,
-          timeRemaining: timeLeft
-        };
-        
-        const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
-        const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
-        
-        await saveCognitiveTestResult('judgment', score, rawData, undefined, studyId, supplementLogId);
-        
-        // Mark scheduled test as completed if this was for a study
-        if (scheduledTest) {
-          await completeScheduledTest(scheduledTest.id);
-        }
-      } catch (error) {
-        console.error('Failed to save connections test result:', error);
-      }
-    }
+    if (elapsedTimer.current) clearInterval(elapsedTimer.current);
   };
 
   const handleDotPress = (dotId: number) => {
@@ -288,37 +250,37 @@ export default function ConnectionsTestScreen() {
   const handleSubmit = async () => {
     if (!isConnected) return;
     
+    const completionTime = Math.floor((Date.now() - startTimeRef.current) / 1000);
     const userLength = connections.reduce((sum, conn) => sum + conn.length, 0);
     const baseScore = Math.round((optimalLength / userLength) * 100);
     
-    let finalScore = baseScore;
-    
-    // Time bonus if score >= 91
-    if (baseScore >= 91) {
-      const bonus = Math.round(((baseScore - 90) * timeLeft) / 5);
-      finalScore += bonus;
-    }
+    const speedBonus = Math.max(0, Math.round((300 - completionTime) / 10));
+    let finalScore = baseScore + (baseScore >= 91 ? speedBonus : 0);
     
     setScore(finalScore);
+    setElapsedTime(completionTime);
     
-    // Save result immediately when submitted
     try {
+      const accuracy = optimalLength > 0 ? Math.min(1, optimalLength / userLength) : 0;
+      const speed = completionTime;
+      
       const rawData = {
         userLength,
         optimalLength,
         connections: connections.length,
         efficiency: optimalLength > 0 ? (optimalLength / userLength) * 100 : 0,
-        timeRemaining: timeLeft,
+        completionTime,
         baseScore,
-        timeBonus: finalScore - baseScore
+        speedBonus: baseScore >= 91 ? speedBonus : 0,
+        accuracy,
+        speed
       };
       
       const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
       const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
       
-      await saveCognitiveTestResult('judgment', finalScore, rawData, undefined, studyId, supplementLogId);
+      await saveCognitiveTestResult('judgment', finalScore, rawData, completionTime, studyId, supplementLogId, accuracy, speed);
       
-      // Mark scheduled test as completed if this was for a study
       if (scheduledTest) {
         await completeScheduledTest(scheduledTest.id);
       }
@@ -330,8 +292,7 @@ export default function ConnectionsTestScreen() {
   };
 
   const handleBackToMenu = () => {
-    if (gameTimer.current) clearTimeout(gameTimer.current);
-    if (countdownTimer.current) clearInterval(countdownTimer.current);
+    if (elapsedTimer.current) clearInterval(elapsedTimer.current);
     router.push('/cognitive-tests');
   };
 
@@ -349,15 +310,10 @@ export default function ConnectionsTestScreen() {
             text: 'Yes',
             style: 'destructive',
             onPress: () => {
-              // Clean up timers
-              if (gameTimer.current) clearTimeout(gameTimer.current);
-              if (countdownTimer.current) clearInterval(countdownTimer.current);
+              if (elapsedTimer.current) clearInterval(elapsedTimer.current);
               
-              // Handle sequence navigation
-              if (params.sequence === 'all-nine') {
+              if (params.sequence === 'all-seven') {
                 router.push('/tests/all-nine');
-              } else if (params.sequence === 'all-three') {
-                router.push('/tests/all-three');
               } else {
                 router.push('/cognitive-tests');
               }
@@ -366,11 +322,8 @@ export default function ConnectionsTestScreen() {
         ]
       );
     } else {
-      // Handle sequence navigation for non-playing states
-      if (params.sequence === 'all-nine') {
+      if (params.sequence === 'all-seven') {
         router.push('/tests/all-nine');
-      } else if (params.sequence === 'all-three') {
-        router.push('/tests/all-three');
       } else {
         router.push('/cognitive-tests');
       }
@@ -378,10 +331,8 @@ export default function ConnectionsTestScreen() {
   };
 
   const handleNextTestOrFinish = () => {
-    if (params.sequence === 'all-nine') {
-      router.push('/tests/rock-dodger?sequence=all-nine');
-    } else if (params.sequence === 'all-three') {
-      router.push('/cognitive-tests'); // End of 3-test sequence
+    if (params.sequence === 'all-seven') {
+      router.push('/tests/rock-dodger?sequence=all-seven');
     } else {
       router.push('/cognitive-tests');
     }
@@ -414,8 +365,7 @@ export default function ConnectionsTestScreen() {
     checkScheduledTest();
     
     return () => {
-      if (gameTimer.current) clearTimeout(gameTimer.current);
-      if (countdownTimer.current) clearInterval(countdownTimer.current);
+      if (elapsedTimer.current) clearInterval(elapsedTimer.current);
     };
   }, []);
 
@@ -424,10 +374,10 @@ export default function ConnectionsTestScreen() {
       <ThemedView style={styles.container} safeArea>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.instructionsContainer}>
-          {(params.sequence === 'all-nine' || params.sequence === 'all-three') && (
+          {params.sequence === 'all-seven' && (
             <ThemedView style={[styles.progressBanner, { backgroundColor: tintColor + '15', borderColor: tintColor }]}>
               <ThemedText style={[styles.progressText, { color: tintColor }]}>
-                {params.sequence === 'all-nine' ? 'Test 3 of 9' : 'Test 3 of 3'} • Run All Tests Mode
+                Test 3 of 7 • Run All Tests Mode
               </ThemedText>
             </ThemedView>
           )}
@@ -445,7 +395,7 @@ export default function ConnectionsTestScreen() {
             • Keep lines short - efficiency matters{'\n'}
             • Avoid loops - they waste distance{'\n'}
             • Score = (Optimal ÷ Your Length) × 100{'\n'}
-            • Time bonus if score ≥ 91
+            • Speed bonus if score ≥ 91
           </ThemedText>
           
           <ThemedView style={styles.exampleContainer}>
@@ -518,7 +468,7 @@ export default function ConnectionsTestScreen() {
           <ThemedText type="title" style={styles.title}>Test Complete!</ThemedText>
           <ThemedText style={styles.finalScore}>Final Score: {score}</ThemedText>
           <ThemedText style={styles.stats}>
-            Efficiency: {efficiency}%{'\n'}
+            Accuracy: {efficiency}% | Speed: {elapsedTime}s{'\n'}
             Your length: {userLength.toFixed(1)}{'\n'}
             Optimal length: {optimalLength.toFixed(1)}
           </ThemedText>
@@ -527,15 +477,13 @@ export default function ConnectionsTestScreen() {
              score >= 85 ? 'Good optimization!' : 
              score >= 70 ? 'Not bad!' : 'Keep practicing!'}
           </ThemedText>
-          {(params.sequence === 'all-nine' || params.sequence === 'all-three') ? (
+          {params.sequence === 'all-seven' ? (
             <>
               <TouchableOpacity 
                 style={[styles.startButton, { backgroundColor: tintColor }]} 
                 onPress={handleNextTestOrFinish}
               >
-                <ThemedText style={styles.startButtonText}>
-                  {params.sequence === 'all-three' ? 'Complete Test Battery' : 'Next Test'}
-                </ThemedText>
+                <ThemedText style={styles.startButtonText}>Next Test</ThemedText>
               </TouchableOpacity>
               <TouchableOpacity style={styles.backButton} onPress={handleExitTest}>
                 <ThemedText style={styles.backButtonText}>Exit Test Battery</ThemedText>
@@ -571,7 +519,7 @@ export default function ConnectionsTestScreen() {
           <Ionicons name="close-outline" size={24} color={tintColor} />
         </TouchableOpacity>
         <View style={styles.gameStats}>
-          <ThemedText style={styles.timer}>Time: {timeLeft}s</ThemedText>
+          <ThemedText style={styles.timer}>Time: {elapsedTime}s</ThemedText>
           <ThemedText style={styles.connectionStatus}>
             {isConnected ? 'Tree Complete ✓' : 'Tree Incomplete'}
           </ThemedText>
@@ -650,8 +598,10 @@ const styles = StyleSheet.create({
   },
   resultsContainer: {
     alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: screenHeight * 0.7,
+    justifyContent: 'flex-start',
+    paddingTop: 80,
+    paddingBottom: 60,
+    paddingHorizontal: 20,
   },
   title: {
     fontSize: 24,

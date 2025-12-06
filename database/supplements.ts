@@ -183,7 +183,7 @@ export const updateSupplement = async (supplement: Supplement): Promise<void> =>
   }, 'update supplement');
 };
 
-export const logSupplement = async (supplementId: number, dosage: number, notes?: string): Promise<number> => {
+export const logSupplement = async (supplementId: number, dosage: number, notes?: string, timestamp?: number): Promise<number> => {
   if (!isDatabaseInitialized()) {
     throw new Error('Database not initialized. Please wait for app to load completely.');
   }
@@ -209,11 +209,11 @@ export const logSupplement = async (supplementId: number, dosage: number, notes?
       throw new Error('Supplement not found');
     }
     
-    const timestamp = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
+    const finalTimestamp = timestamp || Math.floor(Date.now() / 1000); // Unix timestamp in seconds
     
     const result = await db.runAsync(
       'INSERT INTO supplement_logs (supplement_id, timestamp, dosage, notes) VALUES (?, ?, ?, ?)',
-      [supplementId, timestamp, dosage, notes?.trim() || null]
+      [supplementId, finalTimestamp, dosage, notes?.trim() || null]
     );
     
     if (!result.lastInsertRowId) {
@@ -255,6 +255,56 @@ export const getSupplementLogs = async (supplementId?: number, limit?: number): 
     const result = await db.getAllAsync(query, params);
     return result as SupplementLog[];
   }, 'get supplement logs');
+};
+
+export interface SupplementLogWithDetails extends SupplementLog {
+  supplement_name: string;
+  dosage_unit: string;
+  icon_id?: string;
+  color?: string;
+}
+
+export const getSupplementLogsWithDetails = async (limit?: number): Promise<SupplementLogWithDetails[]> => {
+  if (!isDatabaseInitialized()) {
+    throw new Error('Database not initialized. Please wait for app to load completely.');
+  }
+  
+  return await withDatabase(async (db) => {
+    let query = `
+      SELECT 
+        sl.id, sl.supplement_id, sl.timestamp, sl.dosage, sl.notes,
+        s.name as supplement_name, s.dosage_unit, s.icon_id, s.color
+      FROM supplement_logs sl
+      JOIN supplements s ON sl.supplement_id = s.id
+      ORDER BY sl.timestamp DESC
+    `;
+    const params: any[] = [];
+    
+    if (limit && limit > 0) {
+      query += ' LIMIT ?';
+      params.push(limit);
+    }
+    
+    const result = await db.getAllAsync(query, params);
+    return result as SupplementLogWithDetails[];
+  }, 'get supplement logs with details');
+};
+
+export const deleteSupplementLog = async (logId: number): Promise<void> => {
+  if (!isDatabaseInitialized()) {
+    throw new Error('Database not initialized. Please wait for app to load completely.');
+  }
+  
+  if (!logId || logId <= 0) {
+    throw new Error('Invalid log ID');
+  }
+  
+  return await withDatabase(async (db) => {
+    const result = await db.runAsync('DELETE FROM supplement_logs WHERE id = ?', [logId]);
+    if (result.changes === 0) {
+      throw new Error('Log entry not found');
+    }
+  }, 'delete supplement log');
 };
 
 // Exclusion Management Functions

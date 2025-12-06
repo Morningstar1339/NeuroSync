@@ -1,5 +1,5 @@
 import { getDatabase, withDatabase } from './database';
-import { getAllStudyProtocols, StudyProtocol } from './supplements';
+import { StudyProtocol } from './supplements';
 
 export interface ScheduledTest {
   id: number;
@@ -48,7 +48,7 @@ export const scheduleEventBasedTests = async (supplementId: number, supplementLo
   return await withDatabase(
     async (db) => {
       // Get all event-based study protocols for this supplement
-      const protocols = db.getAllSync(
+      const protocols = await db.getAllAsync(
         'SELECT * FROM study_protocols WHERE supplement_id = ? AND schedule_type = ?',
         [supplementId, 'event_based']
       ) as StudyProtocol[];
@@ -98,7 +98,7 @@ export const getUpcomingTests = async (): Promise<ScheduledTest[]> => {
       const now = Math.floor(Date.now() / 1000);
       const oneHourFromNow = now + (60 * 60);
       
-      const result = db.getAllSync(
+      const result = await db.getAllAsync(
         'SELECT * FROM scheduled_tests WHERE scheduled_time BETWEEN ? AND ? AND completed = 0 ORDER BY scheduled_time ASC',
         [now, oneHourFromNow]
       );
@@ -116,7 +116,7 @@ export const getOverdueTests = async (): Promise<ScheduledTest[]> => {
     async (db) => {
       const now = Math.floor(Date.now() / 1000);
       
-      const result = db.getAllSync(
+      const result = await db.getAllAsync(
         'SELECT * FROM scheduled_tests WHERE scheduled_time < ? AND completed = 0 ORDER BY scheduled_time ASC',
         [now]
       );
@@ -227,7 +227,7 @@ export const getActiveStudySessions = async (): Promise<StudySession[]> => {
 };
 
 // Get the most relevant scheduled test for a given test type (closest to current time)
-export const getRelevantScheduledTest = async (testType: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'melody_repeater' | 'tile_puzzle' | 'trail_maker' | 'n_back'): Promise<ScheduledTest | null> => {
+export const getRelevantScheduledTest = async (testType: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back'): Promise<ScheduledTest | null> => {
   const db = getDatabase();
   if (!db) {
     throw new Error('Database not available');
@@ -334,7 +334,7 @@ export const getCurrentlyActiveTests = async (): Promise<ScheduledTest[]> => {
       const now = Math.floor(Date.now() / 1000);
       
       // Consider tests active if they started within their test duration and aren't completed
-      const result = db.getAllSync(`
+      const result = await db.getAllAsync(`
         SELECT st.*, 
                CASE 
                  WHEN st.test_type = 'reflexes' THEN 10

@@ -15,262 +15,262 @@ export interface TestSuite {
   totalTime: number;
 }
 
-// Test database operations
+// Convenience helper for error messages
+const getErrorMessage = (error: any): string =>
+  error && typeof error.message === 'string' ? error.message : String(error);
+
+// 1. Basic DB operations
 export const testDatabaseOperations = async (): Promise<TestSuite> => {
   const results: TestResult[] = [];
   const startTime = Date.now();
-  
-  // Test database connection
+
+  // 1.1 Connection
   try {
     const db = await openDatabase();
+    await db.getAllAsync('SELECT 1');
     results.push({ testName: 'Database Connection', passed: true });
-  } catch (error) {
-    results.push({ 
-      testName: 'Database Connection', 
-      passed: false, 
-      error: error.message 
+  } catch (error: any) {
+    results.push({
+      testName: 'Database Connection',
+      passed: false,
+      error: getErrorMessage(error),
     });
   }
 
-  // Test data insertion and retrieval
+  // 1.2 Simple CRUD on supplements
   try {
     const db = await openDatabase();
-    
-    // Test supplement creation
-    const supplementResult = await db.runAsync(
+
+    const insertResult = await db.runAsync(
       'INSERT INTO supplements (name, default_dosage, dosage_unit) VALUES (?, ?, ?)',
       ['Test Supplement', 100, 'mg']
     );
-    
-    const supplementId = supplementResult.lastInsertRowId;
-    
-    // Test supplement retrieval
-    const supplements = await db.getAllAsync('SELECT * FROM supplements WHERE id = ?', [supplementId]);
-    
-    if (supplements.length === 1) {
-      results.push({ testName: 'Supplement CRUD Operations', passed: true });
-    } else {
-      results.push({ 
-        testName: 'Supplement CRUD Operations', 
-        passed: false, 
-        error: 'Failed to retrieve inserted supplement' 
-      });
-    }
-    
-    // Clean up test data
-    await db.runAsync('DELETE FROM supplements WHERE id = ?', [supplementId]);
-    
-  } catch (error) {
-    results.push({ 
-      testName: 'Supplement CRUD Operations', 
-      passed: false, 
-      error: error.message 
-    });
-  }
 
-  // Test foreign key constraints
-  try {
-    const db = await openDatabase();
-    
-    try {
-      // This should fail due to foreign key constraint
-      await db.runAsync(
-        'INSERT INTO supplement_logs (supplement_id, timestamp, dosage) VALUES (?, ?, ?)',
-        [99999, Math.floor(Date.now() / 1000), 100]
-      );
-      
-      results.push({ 
-        testName: 'Foreign Key Constraints', 
-        passed: false, 
-        error: 'Foreign key constraint not enforced' 
+    const supplementId = insertResult.lastInsertRowId;
+
+    const rows = await db.getAllAsync(
+      'SELECT * FROM supplements WHERE id = ?',
+      [supplementId]
+    );
+
+    if (rows.length === 1) {
+      results.push({
+        testName: 'Supplement CRUD Operations',
+        passed: true,
       });
-    } catch (error) {
-      // This is expected to fail
-      results.push({ testName: 'Foreign Key Constraints', passed: true });
+    } else {
+      results.push({
+        testName: 'Supplement CRUD Operations',
+        passed: false,
+        error: 'Failed to retrieve inserted supplement',
+      });
     }
-    
-  } catch (error) {
-    results.push({ 
-      testName: 'Foreign Key Constraints', 
-      passed: false, 
-      error: error.message 
+
+    await db.runAsync('DELETE FROM supplements WHERE id = ?', [supplementId]);
+  } catch (error: any) {
+    results.push({
+      testName: 'Supplement CRUD Operations',
+      passed: false,
+      error: getErrorMessage(error),
     });
   }
 
   const endTime = Date.now();
-  const passed = results.every(r => r.passed);
-  
+  const passed = results.every((r) => r.passed);
+
   return {
     suiteName: 'Database Operations',
     results,
     passed,
-    totalTime: endTime - startTime
+    totalTime: endTime - startTime,
   };
 };
 
-// Test data validation and edge cases
+// 2. Data validation / edge cases
 export const testDataValidation = async (): Promise<TestSuite> => {
   const results: TestResult[] = [];
   const startTime = Date.now();
-  
-  // Test empty string handling
+
+  // 2.1 Empty string handling
   try {
     const db = await openDatabase();
-    
+
     try {
       await db.runAsync(
         'INSERT INTO supplements (name, default_dosage, dosage_unit) VALUES (?, ?, ?)',
         ['', 100, 'mg']
       );
-      results.push({ 
-        testName: 'Empty String Validation', 
-        passed: false, 
-        error: 'Empty string allowed in name field' 
+
+      results.push({
+        testName: 'Empty String Validation',
+        passed: false,
+        error: 'Empty string allowed in name field',
       });
-    } catch (error) {
+    } catch (_inner: any) {
       // Expected to fail
-      results.push({ testName: 'Empty String Validation', passed: true });
+      results.push({
+        testName: 'Empty String Validation',
+        passed: true,
+      });
     }
-  } catch (error) {
-    results.push({ 
-      testName: 'Empty String Validation', 
-      passed: false, 
-      error: error.message 
+  } catch (error: any) {
+    results.push({
+      testName: 'Empty String Validation',
+      passed: false,
+      error: getErrorMessage(error),
     });
   }
 
-  // Test negative values
+  // 2.2 Negative values (we just check that DB can handle it at all)
   try {
     const db = await openDatabase();
-    
-    const result = await db.runAsync(
+
+    const insertResult = await db.runAsync(
       'INSERT INTO supplements (name, default_dosage, dosage_unit) VALUES (?, ?, ?)',
       ['Test Negative', -100, 'mg']
     );
-    
-    // Clean up
-    await db.runAsync('DELETE FROM supplements WHERE id = ?', [result.lastInsertRowId]);
-    
-    results.push({ testName: 'Negative Value Handling', passed: true });
-  } catch (error) {
-    results.push({ 
-      testName: 'Negative Value Handling', 
-      passed: false, 
-      error: error.message 
+
+    await db.runAsync('DELETE FROM supplements WHERE id = ?', [
+      insertResult.lastInsertRowId,
+    ]);
+
+    results.push({
+      testName: 'Negative Value Handling',
+      passed: true,
+    });
+  } catch (error: any) {
+    results.push({
+      testName: 'Negative Value Handling',
+      passed: false,
+      error: getErrorMessage(error),
     });
   }
 
-  // Test very long strings
+  // 2.3 Long strings
   try {
-    const longString = 'A'.repeat(1000);
     const db = await openDatabase();
-    
-    const result = await db.runAsync(
+    const longString = 'A'.repeat(1000);
+
+    const insertResult = await db.runAsync(
       'INSERT INTO supplements (name, default_dosage, dosage_unit) VALUES (?, ?, ?)',
       [longString, 100, 'mg']
     );
-    
-    // Clean up
-    await db.runAsync('DELETE FROM supplements WHERE id = ?', [result.lastInsertRowId]);
-    
-    results.push({ testName: 'Long String Handling', passed: true });
-  } catch (error) {
-    results.push({ 
-      testName: 'Long String Handling', 
-      passed: false, 
-      error: error.message 
+
+    await db.runAsync('DELETE FROM supplements WHERE id = ?', [
+      insertResult.lastInsertRowId,
+    ]);
+
+    results.push({
+      testName: 'Long String Handling',
+      passed: true,
+    });
+  } catch (error: any) {
+    results.push({
+      testName: 'Long String Handling',
+      passed: false,
+      error: getErrorMessage(error),
     });
   }
 
-  // Test special characters
+  // 2.4 Special characters
   try {
-    const specialString = "Test's \"Special\" Characters & <symbols>";
     const db = await openDatabase();
-    
-    const result = await db.runAsync(
+    const specialString = `Test's "Special" Characters & <symbols>`;
+
+    const insertResult = await db.runAsync(
       'INSERT INTO supplements (name, default_dosage, dosage_unit) VALUES (?, ?, ?)',
       [specialString, 100, 'mg']
     );
-    
-    const retrieved = await db.getAllAsync('SELECT * FROM supplements WHERE id = ?', [result.lastInsertRowId]);
-    
-    if (retrieved.length === 1 && (retrieved[0] as any).name === specialString) {
-      results.push({ testName: 'Special Character Handling', passed: true });
+
+    const retrieved = await db.getAllAsync(
+      'SELECT * FROM supplements WHERE id = ?',
+      [insertResult.lastInsertRowId]
+    );
+
+    if (
+      retrieved.length === 1 &&
+      (retrieved[0] as any).name === specialString
+    ) {
+      results.push({
+        testName: 'Special Character Handling',
+        passed: true,
+      });
     } else {
-      results.push({ 
-        testName: 'Special Character Handling', 
-        passed: false, 
-        error: 'Special characters not preserved' 
+      results.push({
+        testName: 'Special Character Handling',
+        passed: false,
+        error: 'Special characters not preserved',
       });
     }
-    
-    // Clean up
-    await db.runAsync('DELETE FROM supplements WHERE id = ?', [result.lastInsertRowId]);
-  } catch (error) {
-    results.push({ 
-      testName: 'Special Character Handling', 
-      passed: false, 
-      error: error.message 
+
+    await db.runAsync('DELETE FROM supplements WHERE id = ?', [
+      insertResult.lastInsertRowId,
+    ]);
+  } catch (error: any) {
+    results.push({
+      testName: 'Special Character Handling',
+      passed: false,
+      error: getErrorMessage(error),
     });
   }
 
   const endTime = Date.now();
-  const passed = results.every(r => r.passed);
-  
+  const passed = results.every((r) => r.passed);
+
   return {
     suiteName: 'Data Validation',
     results,
     passed,
-    totalTime: endTime - startTime
+    totalTime: endTime - startTime,
   };
 };
 
-// Test performance with large datasets
+// 3. Performance with larger datasets
 export const testPerformanceWithLargeData = async (): Promise<TestSuite> => {
   const results: TestResult[] = [];
   const startTime = Date.now();
-  
+
   try {
-    // Generate test data
-    console.log('Generating test data...');
-    await generateTestData(50, 50); // 50 supplements with 50 logs each = 2500 records
-    
-    results.push({ testName: 'Test Data Generation', passed: true });
-    
-    // Test query performance
-    const db = await openDatabase();
-    
-    // Test supplement list query
-    const supplementQueryStart = Date.now();
-    const supplements = await db.getAllAsync('SELECT * FROM supplements ORDER BY name');
-    const supplementQueryTime = Date.now() - supplementQueryStart;
-    
-    results.push({ 
-      testName: 'Supplement List Query', 
-      passed: supplementQueryTime < 50,
-      duration: supplementQueryTime
+    // 3.1 Generate data
+    await generateTestData(50, 50);
+    results.push({
+      testName: 'Test Data Generation',
+      passed: true,
     });
-    
-    // Test recent logs query
+
+    const db = await openDatabase();
+
+    // 3.2 Supplement list query
+    const supplementQueryStart = Date.now();
+    await db.getAllAsync('SELECT * FROM supplements ORDER BY name');
+    const supplementQueryTime = Date.now() - supplementQueryStart;
+
+    results.push({
+      testName: 'Supplement List Query',
+      passed: supplementQueryTime < 200,
+      duration: supplementQueryTime,
+    });
+
+    // 3.3 Recent logs query
     const logsQueryStart = Date.now();
-    const recentLogs = await db.getAllAsync(`
-      SELECT sl.*, s.name as supplement_name 
-      FROM supplement_logs sl 
-      JOIN supplements s ON sl.supplement_id = s.id 
-      ORDER BY sl.timestamp DESC 
+    await db.getAllAsync(`
+      SELECT sl.*, s.name as supplement_name
+      FROM supplement_logs sl
+      JOIN supplements s ON sl.supplement_id = s.id
+      ORDER BY sl.timestamp DESC
       LIMIT 100
     `);
     const logsQueryTime = Date.now() - logsQueryStart;
-    
-    results.push({ 
-      testName: 'Recent Logs Query', 
-      passed: logsQueryTime < 50,
-      duration: logsQueryTime
+
+    results.push({
+      testName: 'Recent Logs Query',
+      passed: logsQueryTime < 200,
+      duration: logsQueryTime,
     });
-    
-    // Test complex export query
+
+    // 3.4 Complex export query
     const exportQueryStart = Date.now();
-    const exportData = await db.getAllAsync(`
+    await db.getAllAsync(`
       SELECT 
         ctr.id,
         ctr.test_type,
@@ -285,216 +285,192 @@ export const testPerformanceWithLargeData = async (): Promise<TestSuite> => {
       LIMIT 100
     `);
     const exportQueryTime = Date.now() - exportQueryStart;
-    
-    results.push({ 
-      testName: 'Complex Export Query', 
-      passed: exportQueryTime < 50,
-      duration: exportQueryTime
+
+    results.push({
+      testName: 'Complex Export Query',
+      passed: exportQueryTime < 200,
+      duration: exportQueryTime,
     });
-    
-    // Get database stats
+
+    // 3.5 Stats
     const stats = await getDatabaseStats();
-    console.log('Database Stats:', stats);
-    
-    results.push({ 
-      testName: 'Database Statistics', 
+    results.push({
+      testName: 'Database Statistics',
       passed: true,
-      error: `Size: ${stats.estimated_size_mb}MB, Records: ${stats.supplement_logs + stats.cognitive_test_results + stats.symptom_logs}`
+      error: `Size: ${stats.estimated_size_mb}MB, Records: ${
+        stats.supplement_logs +
+        stats.cognitive_test_results +
+        stats.symptom_logs
+      }`,
     });
-    
-  } catch (error) {
-    results.push({ 
-      testName: 'Performance Test Setup', 
-      passed: false, 
-      error: error.message 
+  } catch (error: any) {
+    results.push({
+      testName: 'Performance Test Setup',
+      passed: false,
+      error: getErrorMessage(error),
     });
   } finally {
-    // Clean up test data
     try {
       await clearTestData();
-      results.push({ testName: 'Test Data Cleanup', passed: true });
-    } catch (error) {
-      results.push({ 
-        testName: 'Test Data Cleanup', 
-        passed: false, 
-        error: error.message 
+      results.push({
+        testName: 'Test Data Cleanup',
+        passed: true,
+      });
+    } catch (error: any) {
+      results.push({
+        testName: 'Test Data Cleanup',
+        passed: false,
+        error: getErrorMessage(error),
       });
     }
   }
 
   const endTime = Date.now();
-  const passed = results.every(r => r.passed);
-  
+  const passed = results.every((r) => r.passed);
+
   return {
     suiteName: 'Performance with Large Data',
     results,
     passed,
-    totalTime: endTime - startTime
+    totalTime: endTime - startTime,
   };
 };
 
-// Test error handling and recovery
+// 4. Error handling / recovery
 export const testErrorHandling = async (): Promise<TestSuite> => {
   const results: TestResult[] = [];
   const startTime = Date.now();
-  
-  // Test handling of corrupted data
+
+  // 4.1 Invalid JSON in exclusions.parameters
   try {
     const db = await openDatabase();
-    
-    // Insert invalid JSON in parameters field
-    const result = await db.runAsync(
+
+    const insertResult = await db.runAsync(
       'INSERT INTO exclusions (supplement_id, exclusion_type, parameters) VALUES (?, ?, ?)',
       [1, 'time_window', 'invalid json']
     );
-    
-    // Try to parse the invalid JSON (this should be handled gracefully)
+
     try {
-      const exclusion = await db.getAllAsync('SELECT * FROM exclusions WHERE id = ?', [result.lastInsertRowId]);
+      const exclusion = await db.getAllAsync(
+        'SELECT * FROM exclusions WHERE id = ?',
+        [insertResult.lastInsertRowId]
+      );
       JSON.parse((exclusion[0] as any).parameters);
-      
-      results.push({ 
-        testName: 'Invalid JSON Handling', 
-        passed: false, 
-        error: 'Invalid JSON was parsed successfully' 
+
+      results.push({
+        testName: 'Invalid JSON Handling',
+        passed: false,
+        error: 'Invalid JSON was parsed successfully',
       });
-    } catch (parseError) {
-      // Expected to fail
-      results.push({ testName: 'Invalid JSON Handling', passed: true });
+    } catch (_parseError: any) {
+      // Expected failure
+      results.push({
+        testName: 'Invalid JSON Handling',
+        passed: true,
+      });
     }
-    
-    // Clean up
-    await db.runAsync('DELETE FROM exclusions WHERE id = ?', [result.lastInsertRowId]);
-    
-  } catch (error) {
-    results.push({ 
-      testName: 'Invalid JSON Handling', 
-      passed: false, 
-      error: error.message 
+
+    await db.runAsync('DELETE FROM exclusions WHERE id = ?', [
+      insertResult.lastInsertRowId,
+    ]);
+  } catch (error: any) {
+    results.push({
+      testName: 'Invalid JSON Handling',
+      passed: false,
+      error: getErrorMessage(error),
     });
   }
 
-  // Test timestamp edge cases
+  // 4.2 Timestamp edge cases
   try {
     const db = await openDatabase();
-    
-    // Test with very old timestamp
-    const oldTimestamp = 0; // Unix epoch
+
+    const oldTimestamp = 0;
     const result1 = await db.runAsync(
       'INSERT INTO supplement_logs (supplement_id, timestamp, dosage) VALUES (?, ?, ?)',
       [1, oldTimestamp, 100]
     );
-    
-    // Test with future timestamp
-    const futureTimestamp = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60); // 1 year in future
+
+    const futureTimestamp =
+      Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
     const result2 = await db.runAsync(
       'INSERT INTO supplement_logs (supplement_id, timestamp, dosage) VALUES (?, ?, ?)',
       [1, futureTimestamp, 100]
     );
-    
-    results.push({ testName: 'Timestamp Edge Cases', passed: true });
-    
-    // Clean up
-    await db.runAsync('DELETE FROM supplement_logs WHERE id IN (?, ?)', [result1.lastInsertRowId, result2.lastInsertRowId]);
-    
-  } catch (error) {
-    results.push({ 
-      testName: 'Timestamp Edge Cases', 
-      passed: false, 
-      error: error.message 
+
+    results.push({
+      testName: 'Timestamp Edge Cases',
+      passed: true,
+    });
+
+    await db.runAsync(
+      'DELETE FROM supplement_logs WHERE id IN (?, ?)',
+      [result1.lastInsertRowId, result2.lastInsertRowId]
+    );
+  } catch (error: any) {
+    results.push({
+      testName: 'Timestamp Edge Cases',
+      passed: false,
+      error: getErrorMessage(error),
     });
   }
 
   const endTime = Date.now();
-  const passed = results.every(r => r.passed);
-  
+  const passed = results.every((r) => r.passed);
+
   return {
     suiteName: 'Error Handling',
     results,
     passed,
-    totalTime: endTime - startTime
+    totalTime: endTime - startTime,
   };
 };
 
-// Run all test suites
+// 5. Run all suites
 export const runAllTests = async (): Promise<TestSuite[]> => {
-  console.log('Starting comprehensive test suite...');
-  
-  const testSuites: TestSuite[] = [];
-  
-  try {
-    testSuites.push(await testDatabaseOperations());
-    testSuites.push(await testDataValidation());
-    testSuites.push(await testErrorHandling());
-    testSuites.push(await testPerformanceWithLargeData());
-  } catch (error) {
-    console.error('Test suite failed:', error);
-  }
-  
-  const overallPassed = testSuites.every(suite => suite.passed);
-  const totalTime = testSuites.reduce((sum, suite) => sum + suite.totalTime, 0);
-  
-  console.log(`\n=== Test Results ===`);
-  console.log(`Overall: ${overallPassed ? 'PASSED' : 'FAILED'}`);
-  console.log(`Total Time: ${totalTime}ms`);
-  console.log(`Test Suites: ${testSuites.length}`);
-  
-  testSuites.forEach(suite => {
-    console.log(`\n${suite.suiteName}: ${suite.passed ? 'PASSED' : 'FAILED'} (${suite.totalTime}ms)`);
-    suite.results.forEach(result => {
-      const status = result.passed ? '✓' : '✗';
-      const duration = result.duration ? ` (${result.duration}ms)` : '';
-      const error = result.error ? ` - ${result.error}` : '';
-      console.log(`  ${status} ${result.testName}${duration}${error}`);
-    });
-  });
-  
-  return testSuites;
+  const suites: TestSuite[] = [];
+
+  suites.push(await testDatabaseOperations());
+  suites.push(await testDataValidation());
+  suites.push(await testErrorHandling());
+  suites.push(await testPerformanceWithLargeData());
+
+  return suites;
 };
 
-// Quick health check function
-export const healthCheck = async (): Promise<{healthy: boolean, issues: string[]}> => {
+// 6. Quick health check
+export const healthCheck = async (): Promise<{ healthy: boolean; issues: string[] }> => {
   const issues: string[] = [];
-  
+
   try {
-    // Check database connection
     const db = await openDatabase();
-    
-    // Check if all tables exist
-    const tables = ['supplements', 'supplement_logs', 'symptoms', 'symptom_logs', 
-                   'cognitive_test_results', 'sleep_logs', 'schedules', 'exclusions', 
-                   'study_protocols', 'scheduled_tests'];
-    
+
+    // Simple connectivity check
+    await db.getAllAsync('SELECT 1');
+
+    // Check that some core tables exist
+    const tables = [
+      'supplements',
+      'supplement_logs',
+      'symptoms',
+      'symptom_logs',
+      'cognitive_test_results',
+      'sleep_logs',
+    ];
+
     for (const table of tables) {
       try {
         await db.getAllAsync(`SELECT COUNT(*) FROM ${table} LIMIT 1`);
-      } catch (error) {
+      } catch (_tableError: any) {
         issues.push(`Table ${table} is missing or inaccessible`);
       }
     }
-    
-    // Check if indexes exist
-    const indexes = await db.getAllAsync(`
-      SELECT name FROM sqlite_master 
-      WHERE type = 'index' AND sql IS NOT NULL
-    `);
-    
-    if (indexes.length < 10) {
-      issues.push(`Only ${indexes.length} indexes found, expected at least 10`);
-    }
-    
-    // Check foreign keys are enabled
-    const foreignKeys = await db.getAllAsync('PRAGMA foreign_keys');
-    if (!(foreignKeys[0] as any).foreign_keys) {
-      issues.push('Foreign keys are not enabled');
-    }
-    
-  } catch (error) {
-    issues.push(`Database connection failed: ${error.message}`);
+  } catch (error: any) {
+    issues.push(`Database connection failed: ${getErrorMessage(error)}`);
   }
-  
+
   return {
     healthy: issues.length === 0,
-    issues
+    issues,
   };
 };

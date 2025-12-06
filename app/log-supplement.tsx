@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, TouchableOpacity, Alert, View } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { StyleSheet, TouchableOpacity, Alert, View, Modal, TextInput, AppState, AppStateStatus, Platform, KeyboardAvoidingView, ScrollView, TouchableWithoutFeedback, Keyboard } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { logSupplement, Supplement, isExclusionActive } from '@/database/supplements';
@@ -12,22 +13,31 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 export default function LogSupplementScreen() {
   const [isLogged, setIsLogged] = useState(false);
   const [isLogging, setIsLogging] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editDosage, setEditDosage] = useState('');
+  const [editTimestamp, setEditTimestamp] = useState(new Date());
+  const [showDateTimePicker, setShowDateTimePicker] = useState(false);
+  const [pendingPickerOpen, setPendingPickerOpen] = useState(false);
+  const [tempTimestamp, setTempTimestamp] = useState(new Date());
+  const [countdown, setCountdown] = useState(10);
+  const [isCountdownActive, setIsCountdownActive] = useState(true);
+  
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const appStateRef = useRef(AppState.currentState);
   
   const router = useRouter();
   const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
 
-  // Parse supplement data from params with null checks
-  if (!params || !params.id || !params.name || !params.default_dosage || !params.dosage_unit) {
-    // Handle missing params by navigating back
-    React.useEffect(() => {
-      Alert.alert('Error', 'Missing supplement data. Please try again.');
-      router.back();
-    }, []);
-    return null;
-  }
+  // Determine if we have all the required params
+  const hasValidParams =
+    !!params &&
+    !!params.id &&
+    !!params.name &&
+    !!params.default_dosage &&
+    !!params.dosage_unit;
 
-  const supplement: Supplement = {
+  const supplement: Supplement = useMemo(() => ({
     id: Number(params.id) || 0,
     name: (params.name as string) || 'Unknown',
     default_dosage: Number(params.default_dosage) || 0,
@@ -35,14 +45,14 @@ export default function LogSupplementScreen() {
     icon_id: (params.icon_id as string) || 'medical',
     schedule_enabled: params.schedule_enabled === 'true',
     study_enabled: params.study_enabled === 'true'
-  };
+  }), [params.id, params.name, params.default_dosage, params.dosage_unit, params.icon_id, params.schedule_enabled, params.study_enabled]);
 
-
-
-  const logSupplementEntry = async (forceOverride: boolean = false) => {
+  const logSupplementEntry = useCallback(async (forceOverride: boolean = false, customDosage?: number, customTimestamp?: Date) => {
     if (isLogged || isLogging) return;
     
-    if (!supplement || !supplement.id || supplement.default_dosage <= 0) {
+    const dosageToUse = customDosage || supplement.default_dosage;
+    
+    if (!supplement || !supplement.id || dosageToUse <= 0) {
       Alert.alert('Error', 'Invalid supplement data. Please try again.');
       router.back();
       return;
@@ -51,7 +61,7 @@ export default function LogSupplementScreen() {
     // Check for exclusions unless this is a forced override
     if (!forceOverride) {
       try {
-        const exclusionCheck = await isExclusionActive(supplement.id, supplement.default_dosage);
+        const exclusionCheck = await isExclusionActive(supplement.id, dosageToUse);
         if (exclusionCheck.active) {
           Alert.alert(
             'Exclusion Warning',
@@ -61,7 +71,7 @@ export default function LogSupplementScreen() {
               {
                 text: 'Log Anyway',
                 style: 'destructive',
-                onPress: () => logSupplementEntry(true) // Override exclusion
+                onPress: () => logSupplementEntry(true, customDosage, customTimestamp) // Override exclusion
               }
             ]
           );
@@ -75,9 +85,13 @@ export default function LogSupplementScreen() {
     
     setIsLogging(true);
     try {
-      // Add note if this was an override
-      const notes = forceOverride ? 'Override exclusion warning' : undefined;
-      const logId = await logSupplement(supplement.id, supplement.default_dosage, notes);
+      // Add note if this was an override or custom dosage
+      let notes = forceOverride ? 'Override exclusion warning' : undefined;
+      if (customDosage && customDosage !== supplement.default_dosage) {
+        notes = notes ? `${notes} - Custom dosage: ${customDosage}${supplement.dosage_unit}` : `Custom dosage: ${customDosage}${supplement.dosage_unit}`;
+      }
+      const timestampSeconds = customTimestamp ? Math.floor(customTimestamp.getTime() / 1000) : undefined;
+      const logId = await logSupplement(supplement.id, dosageToUse, notes, timestampSeconds);
       
       // Schedule event-based tests for this supplement
       try {
@@ -108,18 +122,152 @@ export default function LogSupplementScreen() {
     } finally {
       setIsLogging(false);
     }
-  };
+  }, [isLogged, isLogging, supplement, router]);
+
+  // Auto-confirm countdown timer
+  useEffect(() => {
+    if (!isCountdownActive || isLogged || isLogging) return;
+
+    if (countdown <= 0) {
+      logSupplementEntry();
+      return;
+    }
+
+    timerRef.current = setTimeout(() => {
+      setCountdown(prev => prev - 1);
+    }, 1000);
+
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [countdown, isCountdownActive, isLogged, isLogging, logSupplementEntry]);
+
+  // AppState listener for background/inactive detection
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      if (appStateRef.current.match(/active/) && nextAppState.match(/inactive|background/)) {
+        // App going to background - auto-confirm immediately
+        if (isCountdownActive && !isLogged && !isLogging) {
+          logSupplementEntry();
+        }
+      }
+      appStateRef.current = nextAppState;
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    
+    return () => subscription?.remove();
+  }, [isCountdownActive, isLogged, isLogging, logSupplementEntry]);
+
+  // Always call hooks; handle invalid params inside the effect
+  useEffect(() => {
+    if (!hasValidParams) {
+      Alert.alert('Error', 'Missing supplement data. Please try again.');
+      router.back();
+    }
+  }, [hasValidParams, router]);
+
+  // Cleanup timer when component unmounts or navigates away
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, []);
+
+  if (!hasValidParams) {
+    // While the effect runs and navigates back, render nothing
+    return null;
+  }
 
   const handleConfirmNow = () => {
+    setIsCountdownActive(false);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
     logSupplementEntry();
   };
 
   const handleEdit = () => {
-    // For now, just show alert. This would navigate to an edit screen
-    Alert.alert('Edit Entry', 'Edit functionality will be implemented');
+    setIsCountdownActive(false);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setEditDosage(supplement.default_dosage.toString());
+    setEditTimestamp(new Date());
+    setShowEditModal(true);
   };
 
+  const handleSaveEdit = () => {
+    const dosage = parseFloat(editDosage);
+    if (isNaN(dosage) || dosage <= 0) {
+      Alert.alert('Error', 'Please enter a valid dosage amount');
+      return;
+    }
+    
+    // Validate timestamp is not in the future
+    if (editTimestamp.getTime() > Date.now()) {
+      Alert.alert('Error', 'Cannot set a time in the future');
+      return;
+    }
+    
+    setShowEditModal(false);
+    logSupplementEntry(false, dosage, editTimestamp);
+  };
+
+  const handleDateTimeChange = (_event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowDateTimePicker(false);
+      if (selectedDate) {
+        const maxTime = new Date();
+        const finalDate = selectedDate.getTime() > maxTime.getTime() ? maxTime : selectedDate;
+        setEditTimestamp(finalDate);
+      }
+      setShowEditModal(true);
+    } else if (selectedDate) {
+      const maxTime = new Date();
+      const finalDate = selectedDate.getTime() > maxTime.getTime() ? maxTime : selectedDate;
+      setTempTimestamp(finalDate);
+    }
+  };
+
+  const handleOpenDatePicker = () => {
+    setTempTimestamp(editTimestamp);
+    setShowEditModal(false);
+    setPendingPickerOpen(true);
+  };
+
+  const handleConfirmDateTime = () => {
+    setEditTimestamp(tempTimestamp);
+    setShowDateTimePicker(false);
+    setShowEditModal(true);
+  };
+
+  const handleCancelDateTime = () => {
+    setShowDateTimePicker(false);
+    setShowEditModal(true);
+  };
+
+  useEffect(() => {
+    if (pendingPickerOpen && !showEditModal) {
+      setPendingPickerOpen(false);
+      setShowDateTimePicker(true);
+    }
+  }, [pendingPickerOpen, showEditModal]);
+
   const handleCancel = () => {
+    setIsCountdownActive(false);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
     router.back();
   };
 
@@ -163,7 +311,6 @@ export default function LogSupplementScreen() {
           </ThemedText>
         </View>
 
-
         <View style={styles.buttonContainer}>
           <TouchableOpacity
             style={[styles.confirmButton, { backgroundColor: tintColor }]}
@@ -171,9 +318,16 @@ export default function LogSupplementScreen() {
             disabled={isLogging}
           >
             <ThemedText style={styles.confirmButtonText}>
-              {isLogging ? 'Logging...' : 'Confirm'}
+              {isLogging ? 'Logging...' : 
+               isCountdownActive ? `Confirm (auto in ${countdown}s)` : 'Confirm'}
             </ThemedText>
           </TouchableOpacity>
+          
+          {isCountdownActive && !isLogging && (
+            <ThemedText style={styles.countdownText}>
+              Auto-confirming in {countdown} second{countdown !== 1 ? 's' : ''}...
+            </ThemedText>
+          )}
 
           <View style={styles.secondaryButtons}>
             <TouchableOpacity style={styles.secondaryButton} onPress={handleEdit}>
@@ -188,6 +342,107 @@ export default function LogSupplementScreen() {
           </View>
         </View>
       </View>
+
+      {/* Edit Modal */}
+      <Modal
+        visible={showEditModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowEditModal(false)}
+      >
+        <KeyboardAvoidingView 
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <ThemedView style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setShowEditModal(false)}>
+                <ThemedText style={styles.modalHeaderCancel}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <ThemedText style={styles.modalTitle}>Edit Entry</ThemedText>
+              <TouchableOpacity onPress={handleSaveEdit}>
+                <ThemedText style={[styles.modalHeaderSave, { color: tintColor }]}>Save</ThemedText>
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.modalScrollContent} keyboardShouldPersistTaps="handled">
+              <View style={styles.editSection}>
+                <ThemedText style={styles.editLabel}>Dosage</ThemedText>
+                <View style={styles.dosageInputContainer}>
+                  <TextInput
+                    style={styles.dosageInput}
+                    value={editDosage}
+                    onChangeText={setEditDosage}
+                    placeholder="0"
+                    keyboardType="numeric"
+                    placeholderTextColor="#999"
+                  />
+                  <ThemedText style={styles.dosageUnit}>{supplement?.dosage_unit || 'mg'}</ThemedText>
+                </View>
+              </View>
+
+              <View style={styles.editSection}>
+                <ThemedText style={styles.editLabel}>Timestamp</ThemedText>
+                <TouchableOpacity
+                  style={styles.timestampButton}
+                  onPress={handleOpenDatePicker}
+                >
+                  <ThemedText style={styles.timestampText}>
+                    {editTimestamp.toLocaleString()}
+                  </ThemedText>
+                  <Ionicons name="calendar" size={20} color="#8E8E93" />
+                </TouchableOpacity>
+                <ThemedText style={styles.editNote}>
+                  Tap to adjust when you took this supplement
+                </ThemedText>
+              </View>
+            </ScrollView>
+            </ThemedView>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Date/Time Picker - iOS wrapped in modal with confirm button */}
+      {showDateTimePicker && Platform.OS === 'ios' && (
+        <Modal
+          visible={true}
+          animationType="slide"
+          transparent
+          onRequestClose={handleCancelDateTime}
+        >
+          <View style={styles.pickerModalOverlay}>
+            <View style={styles.pickerModalContent}>
+              <View style={styles.pickerHeader}>
+                <TouchableOpacity onPress={handleCancelDateTime}>
+                  <ThemedText style={styles.pickerCancelText}>Cancel</ThemedText>
+                </TouchableOpacity>
+                <ThemedText style={styles.pickerTitle}>Select Date & Time</ThemedText>
+                <TouchableOpacity onPress={handleConfirmDateTime}>
+                  <ThemedText style={[styles.pickerDoneText, { color: tintColor }]}>Done</ThemedText>
+                </TouchableOpacity>
+              </View>
+              <DateTimePicker
+                value={tempTimestamp}
+                mode="datetime"
+                display="spinner"
+                onChange={handleDateTimeChange}
+                maximumDate={new Date()}
+                style={styles.picker}
+              />
+            </View>
+          </View>
+        </Modal>
+      )}
+      {showDateTimePicker && Platform.OS === 'android' && (
+        <DateTimePicker
+          value={editTimestamp}
+          mode="datetime"
+          display="default"
+          onChange={handleDateTimeChange}
+          maximumDate={new Date()}
+        />
+      )}
     </ThemedView>
   );
 }
@@ -246,6 +501,13 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
+  countdownText: {
+    fontSize: 14,
+    color: '#8E8E93',
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 16,
+  },
   secondaryButtons: {
     flexDirection: 'row',
     gap: 40,
@@ -270,5 +532,153 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#8E8E93',
     textAlign: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  modalHeaderCancel: {
+    fontSize: 16,
+    color: '#8E8E93',
+  },
+  modalHeaderSave: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  modalScrollContent: {
+    padding: 24,
+  },
+  editSection: {
+    marginBottom: 24,
+  },
+  editLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  dosageInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    paddingHorizontal: 12,
+  },
+  dosageInput: {
+    flex: 1,
+    fontSize: 16,
+    padding: 12,
+    color: '#000',
+  },
+  dosageUnit: {
+    fontSize: 16,
+    color: '#8E8E93',
+    marginLeft: 8,
+  },
+  editNote: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  timestampButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  timestampText: {
+    fontSize: 16,
+    color: '#000',
+    flex: 1,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  modalCancelButton: {
+    flex: 1,
+    backgroundColor: '#8E8E93',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalCancelButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  modalSaveButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalSaveButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  pickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  pickerModalContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingBottom: 20,
+  },
+  pickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  pickerTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  pickerCancelText: {
+    fontSize: 16,
+    color: '#8E8E93',
+  },
+  pickerDoneText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  picker: {
+    height: 200,
   },
 });

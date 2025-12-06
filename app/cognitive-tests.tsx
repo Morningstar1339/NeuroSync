@@ -6,6 +6,20 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeColor } from '@/hooks/use-theme-color';
 
+const { width: screenWidth } = Dimensions.get('window');
+const CIRCLE_SIZE = Math.min(80, (screenWidth - 100) / 3);
+const GAP = 15;
+
+const TESTS = [
+  { key: 'reflexes',        label: 'Reflexes',   icon: 'flash-outline',         route: '/tests/reflexes' },
+  { key: 'memory',          label: 'Memory',     icon: 'grid-outline',          route: '/tests/memory' },
+  { key: 'connections',     label: 'Connects',   icon: 'git-network-outline',   route: '/tests/connections' },
+  { key: 'rock-dodger',     label: 'Dodger',     icon: 'shield-outline',        route: '/tests/rock-dodger' },
+  { key: 'pattern-matcher', label: 'Pattern',    icon: 'shapes-outline',        route: '/tests/pattern-matcher' },
+  { key: 'tile-puzzle',     label: '8-Tile',     icon: 'apps-outline',          route: '/tests/tile-puzzle' },
+  { key: 'n-back',          label: 'N-Back',     icon: 'layers-outline',        route: '/tests/n-back' },
+] as const;
+
 export default function CognitiveTestsScreen() {
   const router = useRouter();
   const tintColor = useThemeColor({}, 'tint');
@@ -15,128 +29,139 @@ export default function CognitiveTestsScreen() {
     router.push('/');
   };
 
-  const handleReflexesTest = () => {
-    router.push('/tests/reflexes');
+  const startTest = (route: any) => {
+    router.push(route);
   };
 
-  const handleMemoryTest = () => {
-    router.push('/tests/memory');
-  };
-
-  const handleConnectionsTest = () => {
-    router.push('/tests/connections');
-  };
-
-  const handleRockDodgerTest = () => {
-    router.push('/tests/rock-dodger');
-  };
-
-  const handlePatternMatcherTest = () => {
-    router.push('/tests/pattern-matcher');
-  };
-
-  const handleMelodyRepeaterTest = () => {
-    router.push('/tests/melody-repeater');
-  };
-
-  const handleTilePuzzleTest = () => {
-    router.push('/tests/tile-puzzle');
-  };
-
-  const handleBallCountingTest = () => {
-    router.push('/tests/trail-maker');
-  };
-
-  const handleNBackTest = () => {
-    router.push('/tests/n-back');
-  };
-
-  const handleAllNineTests = () => {
+  const handleAllTests = () => {
     router.push('/tests/all-nine');
   };
 
+  const handleInfoPress = () => {
+    router.push('/tests/info');
+  };
+
+  const hexOffset = (CIRCLE_SIZE + GAP) / 2;
+  const verticalSpacing = (CIRCLE_SIZE + GAP) * 0.866;
+
   return (
     <ThemedView style={styles.container} safeArea>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
         <ThemedView style={styles.header}>
-        <TouchableOpacity
-          style={styles.homeButton}
-          onPress={handleHomePress}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="home-outline" size={24} color={tintColor} />
-        </TouchableOpacity>
-        <ThemedText type="title" style={styles.title}>Cognitive Tests</ThemedText>
-        <View style={styles.headerPlaceholder} />
-      </ThemedView>
+          <TouchableOpacity
+            style={styles.homeButton}
+            onPress={handleHomePress}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="home-outline" size={24} color={tintColor} />
+          </TouchableOpacity>
+          <ThemedText type="title" style={styles.title}>
+            Cognitive Tests
+          </ThemedText>
+          <View style={styles.headerPlaceholder} />
+        </ThemedView>
 
-      <ThemedView style={styles.buttonContainer}>
-        <TouchableOpacity style={[styles.testButton, { borderColor: tintColor }]} onPress={handleReflexesTest}>
-          <Ionicons name="flash-outline" size={48} color={tintColor} style={styles.buttonIcon} />
-          <ThemedText type="subtitle" style={styles.buttonText}>Reflexes</ThemedText>
-          <ThemedText style={styles.buttonDescription}>10 seconds • Test reaction time</ThemedText>
-        </TouchableOpacity>
+        <View style={styles.hexContainer}>
+          <View style={styles.hexRow}>
+            <TouchableOpacity
+              style={[styles.circle, { borderColor: tintColor }]}
+              onPress={() => startTest(TESTS[0].route)}
+            >
+              <Ionicons name={TESTS[0].icon as any} size={28} color={tintColor} />
+              <ThemedText style={styles.circleLabel}>{TESTS[0].label}</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.circle, { borderColor: tintColor }]}
+              onPress={() => startTest(TESTS[1].route)}
+            >
+              <Ionicons name={TESTS[1].icon as any} size={28} color={tintColor} />
+              <ThemedText style={styles.circleLabel}>{TESTS[1].label}</ThemedText>
+            </TouchableOpacity>
+          </View>
 
-        <TouchableOpacity style={[styles.testButton, { borderColor: tintColor }]} onPress={handleMemoryTest}>
-          <Ionicons name="grid-outline" size={48} color={tintColor} style={styles.buttonIcon} />
-          <ThemedText type="subtitle" style={styles.buttonText}>Memory</ThemedText>
-          <ThemedText style={styles.buttonDescription}>60 seconds • Match pairs</ThemedText>
-        </TouchableOpacity>
+          <View style={[styles.hexRow, { marginTop: verticalSpacing - CIRCLE_SIZE }]}>
+            <TouchableOpacity
+              style={[styles.circle, { borderColor: tintColor }]}
+              onPress={() => startTest(TESTS[2].route)}
+            >
+              <Ionicons name={TESTS[2].icon as any} size={28} color={tintColor} />
+              <ThemedText style={styles.circleLabel}>{TESTS[2].label}</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.circle, { borderColor: tintColor, backgroundColor: tintColor + '15' }]}
+              onPress={() => startTest(TESTS[3].route)}
+            >
+              <Ionicons name={TESTS[3].icon as any} size={28} color={tintColor} />
+              <ThemedText style={styles.circleLabel}>{TESTS[3].label}</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.circle, { borderColor: tintColor }]}
+              onPress={() => startTest(TESTS[4].route)}
+            >
+              <Ionicons name={TESTS[4].icon as any} size={28} color={tintColor} />
+              <ThemedText style={styles.circleLabel}>{TESTS[4].label}</ThemedText>
+            </TouchableOpacity>
+          </View>
 
-        <TouchableOpacity style={[styles.testButton, { borderColor: tintColor }]} onPress={handleConnectionsTest}>
-          <Ionicons name="git-network-outline" size={48} color={tintColor} style={styles.buttonIcon} />
-          <ThemedText type="subtitle" style={styles.buttonText}>Connections</ThemedText>
-          <ThemedText style={styles.buttonDescription}>60 seconds • Connect dots optimally</ThemedText>
-        </TouchableOpacity>
+          <View style={[styles.hexRow, { marginTop: verticalSpacing - CIRCLE_SIZE }]}>
+            <TouchableOpacity
+              style={[styles.circle, { borderColor: tintColor }]}
+              onPress={() => startTest(TESTS[5].route)}
+            >
+              <Ionicons name={TESTS[5].icon as any} size={28} color={tintColor} />
+              <ThemedText style={styles.circleLabel}>{TESTS[5].label}</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.circle, { borderColor: tintColor }]}
+              onPress={() => startTest(TESTS[6].route)}
+            >
+              <Ionicons name={TESTS[6].icon as any} size={28} color={tintColor} />
+              <ThemedText style={styles.circleLabel}>{TESTS[6].label}</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
 
-        <TouchableOpacity style={[styles.testButton, { borderColor: tintColor }]} onPress={handleRockDodgerTest}>
-          <Ionicons name="shield-outline" size={48} color={tintColor} style={styles.buttonIcon} />
-          <ThemedText type="subtitle" style={styles.buttonText}>Rock Dodger</ThemedText>
-          <ThemedText style={styles.buttonDescription}>Until failure • Test reflexes and coordination</ThemedText>
-        </TouchableOpacity>
+        <ThemedView style={styles.bottomButtons}>
+          <TouchableOpacity
+            style={[styles.runAllButton, { backgroundColor: tintColor }]}
+            onPress={handleAllTests}
+          >
+            <Ionicons
+              name="checkmark-done-outline"
+              size={24}
+              color={backgroundColor}
+              style={styles.runAllIcon}
+            />
+            <ThemedText
+              type="subtitle"
+              style={[styles.runAllText, { color: backgroundColor }]}
+            >
+              Run All 7 Tests
+            </ThemedText>
+          </TouchableOpacity>
 
-        <TouchableOpacity style={[styles.testButton, { borderColor: tintColor }]} onPress={handlePatternMatcherTest}>
-          <Ionicons name="shapes-outline" size={48} color={tintColor} style={styles.buttonIcon} />
-          <ThemedText type="subtitle" style={styles.buttonText}>Pattern Matcher</ThemedText>
-          <ThemedText style={styles.buttonDescription}>Until complete • Working memory and logic</ThemedText>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={[styles.testButton, { borderColor: tintColor }]} onPress={handleMelodyRepeaterTest}>
-          <Ionicons name="musical-notes-outline" size={48} color={tintColor} style={styles.buttonIcon} />
-          <ThemedText type="subtitle" style={styles.buttonText}>Melody Repeater</ThemedText>
-          <ThemedText style={styles.buttonDescription}>Until failure • Auditory memory test</ThemedText>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={[styles.testButton, { borderColor: tintColor }]} onPress={handleTilePuzzleTest}>
-          <Ionicons name="grid-outline" size={48} color={tintColor} style={styles.buttonIcon} />
-          <ThemedText type="subtitle" style={styles.buttonText}>8-Tile Puzzle</ThemedText>
-          <ThemedText style={styles.buttonDescription}>Until solved • Spatial reasoning test</ThemedText>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={[styles.testButton, { borderColor: tintColor }]} onPress={handleBallCountingTest}>
-          <Ionicons name="basketball-outline" size={48} color={tintColor} style={styles.buttonIcon} />
-          <ThemedText type="subtitle" style={styles.buttonText}>Ball Counting</ThemedText>
-          <ThemedText style={styles.buttonDescription}>15 seconds • Count bouncing balls</ThemedText>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={[styles.testButton, { borderColor: tintColor }]} onPress={handleNBackTest}>
-          <Ionicons name="layers-outline" size={48} color={tintColor} style={styles.buttonIcon} />
-          <ThemedText type="subtitle" style={styles.buttonText}>N-Back</ThemedText>
-          <ThemedText style={styles.buttonDescription}>20 trials • Scientific working memory test</ThemedText>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={[styles.allTestsButton, { backgroundColor: tintColor }]} onPress={handleAllNineTests}>
-          <Ionicons name="checkmark-done-outline" size={48} color={backgroundColor} style={styles.buttonIcon} />
-          <ThemedText type="subtitle" style={[styles.buttonText, { color: backgroundColor }]}>All 9 Tests</ThemedText>
-          <ThemedText style={[styles.buttonDescription, { color: backgroundColor, opacity: 0.9 }]}>Complete full test battery</ThemedText>
-        </TouchableOpacity>
-      </ThemedView>
+          <TouchableOpacity
+            style={styles.infoButton}
+            onPress={handleInfoPress}
+          >
+            <Ionicons
+              name="information-circle-outline"
+              size={22}
+              color={tintColor}
+              style={styles.infoIcon}
+            />
+            <ThemedText style={styles.infoText}>
+              Info about these tests
+            </ThemedText>
+          </TouchableOpacity>
+        </ThemedView>
       </ScrollView>
     </ThemedView>
   );
 }
-
-const { height: screenHeight } = Dimensions.get('window');
 
 const styles = StyleSheet.create({
   container: {
@@ -144,72 +169,84 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingTop: 50,
-    minHeight: screenHeight * 0.9,
+    paddingHorizontal: 20,
+    paddingVertical: 24,
   },
   header: {
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    marginBottom: 5,
+    paddingBottom: 12,
+    marginBottom: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    flex: 1,
-    textAlign: 'center',
-  },
   homeButton: {
-    padding: 8,
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
+    padding: 4,
   },
   headerPlaceholder: {
-    width: 40,
-    height: 40,
+    width: 24,
+    height: 24,
   },
-  buttonContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-    justifyContent: 'flex-start',
-    gap: 16,
-    marginTop: 20,
+  title: {
+    fontSize: 24,
+    fontWeight: '700',
   },
-  testButton: {
-    backgroundColor: 'transparent',
+  hexContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  hexRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: GAP,
+  },
+  circle: {
+    width: CIRCLE_SIZE,
+    height: CIRCLE_SIZE,
+    borderRadius: CIRCLE_SIZE / 2,
     borderWidth: 2,
-    borderRadius: 10,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
     alignItems: 'center',
-    minHeight: 80,
     justifyContent: 'center',
-    width: '100%',
   },
-  allTestsButton: {
-    borderRadius: 10,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    minHeight: 80,
-    justifyContent: 'center',
-    width: '100%',
-  },
-  buttonIcon: {
-    marginBottom: 2,
-  },
-  buttonText: {
-    fontSize: 16,
+  circleLabel: {
+    fontSize: 10,
     fontWeight: '600',
-    marginBottom: 1,
-  },
-  buttonDescription: {
-    fontSize: 12,
-    opacity: 0.7,
     textAlign: 'center',
+    marginTop: 2,
+  },
+  bottomButtons: {
+    marginTop: 30,
+    gap: 12,
+  },
+  runAllButton: {
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  runAllIcon: {
+    marginRight: 8,
+  },
+  runAllText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  infoButton: {
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#ccc',
+  },
+  infoIcon: {
+    marginRight: 6,
+  },
+  infoText: {
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

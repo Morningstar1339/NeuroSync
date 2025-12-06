@@ -171,7 +171,8 @@ export default function NotificationSettingsScreen() {
   };
 
   const handleTimePickerChange = (event: any, selectedTime?: Date) => {
-    setShowTimePicker(false);
+    void event;
+	setShowTimePicker(false);
     
     if (selectedTime) {
       const hours = selectedTime.getHours().toString().padStart(2, '0');

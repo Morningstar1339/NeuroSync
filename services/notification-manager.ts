@@ -106,6 +106,8 @@ export class NotificationManager {
           shouldShowAlert: true,
           shouldPlaySound: true,
           shouldSetBadge: true,
+		  shouldShowBanner: true,
+		shouldShowList: true,
         }),
       });
     } catch (error) {
@@ -222,7 +224,7 @@ export class NotificationManager {
     }
   }
 
-  private async handleSleepReminderTap(data: any): Promise<void> {
+private async handleSleepReminderTap(_data: any): Promise<void> {
     try {
       // Navigate to sleep logs or settings
       router.push('/sleep-logs');

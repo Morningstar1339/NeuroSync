@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, TouchableOpacity, View, Dimensions, Animated, Alert, ScrollView } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { saveCognitiveTestResult } from '@/database/cognitive-tests';
-import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
+import { getRelevantScheduledTest, completeScheduledTest, getTestContext } from '@/database/study-scheduler';
 import { validateTestPrerequisites, handleTestSaveError } from '@/utils/test-validation';
 import { checkDatabaseHealth } from '@/database/database';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,9 +17,6 @@ const ROWS = 6;
 const COLS = 4;
 const TOTAL_CARDS = ROWS * COLS; // 24 cards
 const UNIQUE_PAIRS = TOTAL_CARDS / 2; // 12 pairs
-// Removed timer - no time pressure!
-const FLASH_DURATION = 1000; // 1 second
-const PRE_FLASH_DELAY = 1500; // 1.5 second delay before flash
 
 const SHAPES = ['triangle', 'square', 'circle'] as const;
 const COLORS = ['#FF4444', '#00CC88', '#0088FF', '#FF8800'] as const;
@@ -39,21 +37,25 @@ export default function MemoryTestScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
+  const insets = useSafeAreaInsets();
   
+  const [, setConsecutiveMatches] = useState<number>(0);
   const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
   const [cards, setCards] = useState<Card[]>([]);
   const [score, setScore] = useState(0);
   const [completionTime, setCompletionTime] = useState(0);
   const [selectedCards, setSelectedCards] = useState<number[]>([]);
   const [matchedPairs, setMatchedPairs] = useState(0);
-  const [consecutiveMatches, setConsecutiveMatches] = useState(0);
+  const [mismatches, setMismatches] = useState(0);
   const [scheduledTest, setScheduledTest] = useState<any>(null);
   const [studyContext, setStudyContext] = useState<any>(null);
   const [gameStartTime, setGameStartTime] = useState<number>(0);
+  const [initialFlash, setInitialFlash] = useState(false);
   
   // Removed game and countdown timers
-  const flashTimer = useRef<NodeJS.Timeout | null>(null);
-  const flipBackTimer = useRef<NodeJS.Timeout | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  const flipBackTimer = useRef<number | null>(null);
+  const initialFlashTimer = useRef<number | null>(null);
 
   const animateCardFlip = (cardId: number, toValue: number, duration: number = 250) => {
     const card = cards.find(c => c.id === cardId);
@@ -135,8 +137,15 @@ export default function MemoryTestScreen() {
     setCompletionTime(0);
     setSelectedCards([]);
     setMatchedPairs(0);
-    setConsecutiveMatches(0);
+    setMismatches(0);
+    setConsecutiveMatches((prev: number) => prev + 1);
     setGameStartTime(Date.now());
+    
+    // Start initial flash - show all cards face-up for 200ms
+    setInitialFlash(true);
+    initialFlashTimer.current = setTimeout(() => {
+      setInitialFlash(false);
+    }, 200);
   };
 
   // Removed timer functions - no time pressure!
@@ -147,24 +156,31 @@ export default function MemoryTestScreen() {
     setCompletionTime(finalCompletionTime);
     
     setGameState('finished');
+    setInitialFlash(false);
     clearTimers();
     
     // Save test result with study context if available
     const saveTestResult = async () => {
       try {
         console.log('🔄 MEMORY TEST: Saving test result...');
+        const totalAttempts = matchedPairs + mismatches;
+        const accuracy = totalAttempts > 0 ? matchedPairs / totalAttempts : 1;
+        const speed = finalCompletionTime;
+        
         const rawData = {
-          flips: score, // Total number of flips made
+          flips: score,
           matchedPairs,
           totalPairs: UNIQUE_PAIRS,
-          completionTime: finalCompletionTime
+          completionTime: finalCompletionTime,
+          mismatches,
+          accuracy,
+          speed
         };
         
         const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
         const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
         
-        // Use flips as score - lower is better (like golf scoring)
-        await saveCognitiveTestResult('memory', score, rawData, finalCompletionTime, studyId, supplementLogId);
+        await saveCognitiveTestResult('memory', score, rawData, finalCompletionTime, studyId, supplementLogId, accuracy, speed);
         
         // Mark scheduled test as completed if this was for a study
         if (scheduledTest) {
@@ -191,93 +207,172 @@ export default function MemoryTestScreen() {
   const clearTimers = () => {
     if (flashTimer.current) clearTimeout(flashTimer.current);
     if (flipBackTimer.current) clearTimeout(flipBackTimer.current);
+    if (initialFlashTimer.current) clearTimeout(initialFlashTimer.current);
   };
 
-  const handleCardPress = (cardId: number) => {
-    if (gameState !== 'playing') return;
-    
-    const card = cards.find(c => c.id === cardId);
-    if (!card || card.isFlipped || card.isMatched) return;
-    
-    if (selectedCards.length === 0) {
-      // First card selection
-      setSelectedCards([cardId]);
-      setCards(cards => cards.map(c => 
-        c.id === cardId ? { ...c, isFlipped: true } : c
-      ));
-      animateCardFlip(cardId, 1);
-      // Count each flip
-      setScore(prev => prev + 1);
-    } else if (selectedCards.length === 1) {
-      // Second card selection
-      setSelectedCards([...selectedCards, cardId]);
-      setCards(cards => cards.map(c => 
-        c.id === cardId ? { ...c, isFlipped: true } : c
-      ));
-      animateCardFlip(cardId, 1);
-      // Count each flip
-      setScore(prev => prev + 1);
-      
-      // Check for match
-      const firstCard = cards.find(c => c.id === selectedCards[0]);
-      const secondCard = cards.find(c => c.id === cardId);
-      
-      if (firstCard && secondCard && firstCard.shape === secondCard.shape && firstCard.color === secondCard.color) {
-        // Match found
-        setMatchedPairs(prev => prev + 1);
-        setConsecutiveMatches(prev => prev + 1);
-        setCards(cards => cards.map(c => 
-          (c.id === selectedCards[0] || c.id === cardId) 
-            ? { ...c, isMatched: true } 
-            : c
-        ));
-        setSelectedCards([]);
-        
-        // Check if all pairs are matched
-        if (matchedPairs + 1 === UNIQUE_PAIRS) {
-          endGame();
-        }
-      } else {
-        // No match - reset consecutive matches
-        setConsecutiveMatches(0);
-        
-        // Flip cards back after a short delay
-        flipBackTimer.current = setTimeout(() => {
-          setCards(cards => cards.map(c => 
-            (c.id === selectedCards[0] || c.id === cardId) 
-              ? { ...c, isFlipped: false } 
-              : c
-          ));
-          animateMultipleCards([selectedCards[0], cardId], 0);
-          setSelectedCards([]);
-        }, 1000);
-      }
-    }
-  };
+	const handleCardPress = (cardId: number) => {
+	  if (gameState !== 'playing' || initialFlash) return;
 
-  const renderShape = (shape: Shape, color: Color) => {
-    if (!shape || !color) {
-      return <View style={styles.square} />;
-    }
-    
-    const size = 20;
-    switch (shape) {
-      case 'triangle':
-        return (
-          <View style={[styles.triangle, { borderBottomColor: color, borderBottomWidth: size }]} />
-        );
-      case 'square':
-        return (
-          <View style={[styles.square, { backgroundColor: color, width: size, height: size }]} />
-        );
-      case 'circle':
-        return (
-          <View style={[styles.circle, { backgroundColor: color, width: size, height: size, borderRadius: size / 2 }]} />
-        );
-      default:
-        return <View style={[styles.square, { backgroundColor: color || '#ccc', width: size, height: size }]} />;
-    }
-  };
+	  const card = cards.find(c => c.id === cardId);
+	  if (!card || card.isFlipped || card.isMatched) return;
+
+	  // If two cards are already flipped (and didn't match), immediately
+	  // flip them back and treat this tap as the first card of a new attempt.
+	  if (selectedCards.length === 2) {
+		const [firstId, secondId] = selectedCards;
+
+		// Cancel any pending flip-back timeout
+		if (flipBackTimer.current) {
+		  clearTimeout(flipBackTimer.current);
+		  flipBackTimer.current = null;
+		}
+
+		// Flip the previous two cards back to hidden
+		setCards(cards =>
+		  cards.map(c =>
+			c.id === firstId || c.id === secondId
+			  ? { ...c, isFlipped: false }
+			  : c,
+		  ),
+		);
+		animateMultipleCards([firstId, secondId], 0);
+
+		// Now handle this tap as the first selection
+		setSelectedCards([cardId]);
+		setCards(cards =>
+		  cards.map(c =>
+			c.id === cardId ? { ...c, isFlipped: true } : c,
+		  ),
+		);
+		animateCardFlip(cardId, 1);
+		setScore(prev => prev + 1);
+		return;
+	  }
+
+	  if (selectedCards.length === 0) {
+		// First card selection
+		setSelectedCards([cardId]);
+		setCards(cards =>
+		  cards.map(c =>
+			c.id === cardId ? { ...c, isFlipped: true } : c,
+		  ),
+		);
+		animateCardFlip(cardId, 1);
+		// Count each flip
+		setScore(prev => prev + 1);
+	  } else if (selectedCards.length === 1) {
+		// Second card selection
+		setSelectedCards([...selectedCards, cardId]);
+		setCards(cards =>
+		  cards.map(c =>
+			c.id === cardId ? { ...c, isFlipped: true } : c,
+		  ),
+		);
+		animateCardFlip(cardId, 1);
+		// Count each flip
+		setScore(prev => prev + 1);
+
+		// Check for match
+		const firstCard = cards.find(c => c.id === selectedCards[0]);
+		const secondCard = cards.find(c => c.id === cardId);
+
+		if (
+		  firstCard &&
+		  secondCard &&
+		  firstCard.shape === secondCard.shape &&
+		  firstCard.color === secondCard.color
+		) {
+		  // Match found
+		  setMatchedPairs(prev => prev + 1);
+		  setConsecutiveMatches((prev: number) => prev + 1);
+		  setCards(cards =>
+			cards.map(c =>
+			  c.id === selectedCards[0] || c.id === cardId
+				? { ...c, isMatched: true }
+				: c,
+			),
+		  );
+		  setSelectedCards([]);
+
+		  // Check if all pairs are matched
+		  if (matchedPairs + 1 === UNIQUE_PAIRS) {
+			endGame();
+		  }
+		} else {
+		  // No match - reset consecutive matches and count mismatch
+		  setConsecutiveMatches(0);
+		  setMismatches(prev => prev + 1);
+
+		  // Flip cards back after a short delay if the user
+		  // does NOT tap a third card. If they do tap a third
+		  // card, the handler above will cancel this timer.
+		  flipBackTimer.current = setTimeout(() => {
+			setCards(cards =>
+			  cards.map(c =>
+				c.id === selectedCards[0] || c.id === cardId
+				  ? { ...c, isFlipped: false }
+				  : c,
+			  ),
+			);
+			animateMultipleCards([selectedCards[0], cardId], 0);
+			setSelectedCards([]);
+		  }, 1000);
+		}
+	  }
+	};
+
+const renderShape = (shape: Shape, color: Color) => {
+  if (!shape || !color) {
+    return <View style={styles.square} />;
+  }
+
+  const size = 20;
+
+  switch (shape) {
+    case 'triangle':
+      return (
+        <View
+          style={[
+            styles.triangle,
+            { borderBottomColor: color, borderBottomWidth: size },
+          ]}
+        />
+      );
+    case 'square':
+      return (
+        <View
+          style={[
+            styles.square,
+            { backgroundColor: color, width: size, height: size },
+          ]}
+        />
+      );
+    case 'circle':
+      return (
+        <View
+          style={[
+            styles.circle,
+            {
+              backgroundColor: color,
+              width: size,
+              height: size,
+              borderRadius: size / 2,
+            },
+          ]}
+        />
+      );
+    default:
+      return (
+        <View
+          style={[
+            styles.square,
+            { backgroundColor: color || '#ccc', width: size, height: size },
+          ]}
+        />
+      );
+  }
+};
+
 
   const handleBackToMenu = () => {
     clearTimers();
@@ -298,13 +393,11 @@ export default function MemoryTestScreen() {
             text: 'Yes',
             style: 'destructive',
             onPress: () => {
+              setInitialFlash(false);
               clearTimers();
               
-              // Handle sequence navigation
-              if (params.sequence === 'all-nine') {
+              if (params.sequence === 'all-seven') {
                 router.push('/tests/all-nine');
-              } else if (params.sequence === 'all-three') {
-                router.push('/tests/all-three');
               } else {
                 router.push('/cognitive-tests');
               }
@@ -313,11 +406,8 @@ export default function MemoryTestScreen() {
         ]
       );
     } else {
-      // Handle sequence navigation for non-playing states
-      if (params.sequence === 'all-nine') {
+      if (params.sequence === 'all-seven') {
         router.push('/tests/all-nine');
-      } else if (params.sequence === 'all-three') {
-        router.push('/tests/all-three');
       } else {
         router.push('/cognitive-tests');
       }
@@ -325,10 +415,8 @@ export default function MemoryTestScreen() {
   };
 
   const handleNextTestOrFinish = () => {
-    if (params.sequence === 'all-nine') {
-      router.push('/tests/connections?sequence=all-nine');
-    } else if (params.sequence === 'all-three') {
-      router.push('/tests/connections?sequence=all-three');
+    if (params.sequence === 'all-seven') {
+      router.push('/tests/connections?sequence=all-seven');
     } else {
       router.push('/cognitive-tests');
     }
@@ -376,10 +464,10 @@ export default function MemoryTestScreen() {
       <ThemedView style={styles.container} safeArea>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.instructionsContainer}>
-          {(params.sequence === 'all-nine' || params.sequence === 'all-three') && (
+          {params.sequence === 'all-seven' && (
             <ThemedView style={[styles.progressBanner, { backgroundColor: tintColor + '15', borderColor: tintColor }]}>
               <ThemedText style={[styles.progressText, { color: tintColor }]}>
-                {params.sequence === 'all-nine' ? 'Test 2 of 9' : 'Test 2 of 3'} • Run All Tests Mode
+                Test 2 of 7 • Run All Tests Mode
               </ThemedText>
             </ThemedView>
           )}
@@ -418,15 +506,18 @@ export default function MemoryTestScreen() {
   if (gameState === 'finished') {
     return (
       <ThemedView style={styles.container} safeArea>
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ScrollView 
+          contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top + 20, 60) }]} 
+          showsVerticalScrollIndicator={false}
+        >
           <ThemedView style={styles.resultsContainer}>
           <ThemedText type="title" style={styles.title}>Test Complete!</ThemedText>
           <ThemedText style={styles.finalScore}>Total Flips: {score}</ThemedText>
           <ThemedText style={styles.stats}>
-            Completion Time: {completionTime.toFixed(1)}s
+            Accuracy: {((matchedPairs + mismatches) > 0 ? (matchedPairs / (matchedPairs + mismatches)) * 100 : 100).toFixed(1)}% | Speed: {completionTime.toFixed(1)}s
           </ThemedText>
           <ThemedText style={styles.stats}>
-            Pairs Matched: {matchedPairs}/{UNIQUE_PAIRS}
+            Pairs Matched: {matchedPairs}/{UNIQUE_PAIRS} | Mismatches: {mismatches}
           </ThemedText>
           <ThemedText style={styles.resultMessage}>
             {score <= 24 ? 'Perfect memory!' : 
@@ -434,7 +525,7 @@ export default function MemoryTestScreen() {
              score <= 40 ? 'Good job!' : 
              score <= 50 ? 'Not bad!' : 'Keep practicing!'}
           </ThemedText>
-          {(params.sequence === 'all-nine' || params.sequence === 'all-three') ? (
+          {params.sequence === 'all-seven' ? (
             <>
               <TouchableOpacity 
                 style={[styles.startButton, { backgroundColor: tintColor }]} 
@@ -508,14 +599,17 @@ export default function MemoryTestScreen() {
             'rgba(150, 206, 180, 0.05)'  // Bottom-right: light green
           ];
           
+          // During initial flash, force all cards to show face-up
+          const isCardFaceUp = initialFlash || card.isFlipped || card.isMatched;
+          
           const frontInterpolate = card.flipAnimation.interpolate({
             inputRange: [0, 1],
-            outputRange: ['0deg', '180deg'],
+            outputRange: isCardFaceUp || initialFlash ? ['180deg', '180deg'] : ['0deg', '180deg'],
           });
           
           const backInterpolate = card.flipAnimation.interpolate({
             inputRange: [0, 1],
-            outputRange: ['180deg', '360deg'],
+            outputRange: isCardFaceUp || initialFlash ? ['360deg', '360deg'] : ['180deg', '360deg'],
           });
 
           return (
@@ -570,9 +664,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: 'center',
     padding: 20,
-    minHeight: screenHeight * 0.9,
   },
   gameScrollContent: {
     flexGrow: 1,
@@ -585,8 +677,9 @@ const styles = StyleSheet.create({
   },
   resultsContainer: {
     alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: screenHeight * 0.7,
+    justifyContent: 'flex-start',
+    paddingTop: 20,
+    paddingBottom: 40,
   },
   title: {
     fontSize: 28,
@@ -739,6 +832,7 @@ const styles = StyleSheet.create({
   },
   finalScore: {
     fontSize: 32,
+    lineHeight: 40,
     fontWeight: 'bold',
     marginBottom: 20,
   },

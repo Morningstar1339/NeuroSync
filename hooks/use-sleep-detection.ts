@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
-import { logSleep, getLastSleepLog } from '@/database/sleep';
+import { logSleep } from '@/database/sleep';
 
 interface SleepDetectionConfig {
   bedtimeHour: number; // 1-12
@@ -19,7 +19,6 @@ export const useSleepDetection = (config: SleepDetectionConfig) => {
   const appStateRef = useRef(AppState.currentState);
   const lastActiveTimeRef = useRef<number>(Date.now());
   const usageEventsRef = useRef<PhoneUsageEvent[]>([]);
-  const sleepWindowStartRef = useRef<number | null>(null);
   
   // Convert 12-hour format to 24-hour format
   const convertTo24Hour = (): number => {

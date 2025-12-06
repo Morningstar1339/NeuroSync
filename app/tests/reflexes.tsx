@@ -26,54 +26,58 @@ export default function ReflexesTestScreen() {
   const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
   const insets = useSafeAreaInsets();
-  
+  const [gameAreaSize, setGameAreaSize] = useState({ width: 0, height: 0 });
   const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
   const [score, setScore] = useState(0);
+  const [hits, setHits] = useState(0);
+  const [misses, setMisses] = useState(0);
+  const [totalTargets, setTotalTargets] = useState(0);
+  const [reactionTimes, setReactionTimes] = useState<number[]>([]);
+  const lastBubbleTime = useRef<number>(0);
   const [timeLeft, setTimeLeft] = useState(TEST_DURATION / 1000);
   const [bubblePosition, setBubblePosition] = useState<BubblePosition>({ x: 0, y: 0 });
   const [scheduledTest, setScheduledTest] = useState<any>(null);
   const [studyContext, setStudyContext] = useState<any>(null);
   const [activeTestSession, setActiveTestSession] = useState<any>(null);
   
-  const gameTimer = useRef<NodeJS.Timeout | null>(null);
-  const countdownTimer = useRef<NodeJS.Timeout | null>(null);
+  const gameTimer = useRef<number | null>(null);
+  const countdownTimer = useRef<number | null>(null);
 
-  const generateRandomPosition = (): BubblePosition => {
-    // Calculate safe play area using safe area insets
-    const EXTRA_BUFFER = 100; // Extra buffer for Android navigation bar
-    const SIDE_MARGIN = 50; // Margin from left/right edges
-    const HEADER_HEIGHT = 60; // Reduced space for game header (timer/score)
-    
-    // Calculate play area boundaries with safe area insets
-    // Start from 15% down from top to allow upper spawning
-    const playAreaTop = Math.max(insets.top + HEADER_HEIGHT, screenHeight * 0.15);
-    const playAreaBottom = screenHeight - insets.bottom - EXTRA_BUFFER;
-    const playAreaLeft = insets.left + SIDE_MARGIN;
-    const playAreaRight = screenWidth - insets.right - SIDE_MARGIN;
-    
-    // Use full allowed range from 15% to 80% of screen height
-    const safePlayAreaBottom = Math.min(playAreaBottom, screenHeight * 0.8);
-    
-    // Ensure bubbles don't get cut off at edges
-    const adjustedMinX = playAreaLeft + BUBBLE_SIZE / 2;
-    const adjustedMaxX = playAreaRight - BUBBLE_SIZE / 2;
-    const adjustedMinY = playAreaTop + BUBBLE_SIZE / 2;
-    const adjustedMaxY = safePlayAreaBottom - BUBBLE_SIZE / 2;
-    
-    // Ensure we have a valid play area
-    if (adjustedMaxX <= adjustedMinX || adjustedMaxY <= adjustedMinY) {
-      // Fallback to center if play area is too small
-      return {
-        x: screenWidth / 2,
-        y: screenHeight / 2,
-      };
-    }
-    
+const generateRandomPosition = (): BubblePosition => {
+  // If we don't know the layout yet, just center the bubble as a fallback
+  if (!gameAreaSize.width || !gameAreaSize.height) {
     return {
-      x: Math.random() * (adjustedMaxX - adjustedMinX) + adjustedMinX,
-      y: Math.random() * (adjustedMaxY - adjustedMinY) + adjustedMinY,
+      x: screenWidth / 2,
+      y: screenHeight / 2,
     };
+  }
+
+  // Margins *within the game area* (not the whole screen)
+  const SIDE_MARGIN = 40;
+  const TOP_MARGIN = 20;
+  const BOTTOM_MARGIN = insets.bottom + 32; // keep clear of gesture/nav area
+
+  const minX = SIDE_MARGIN + BUBBLE_SIZE / 2;
+  const maxX = gameAreaSize.width - SIDE_MARGIN - BUBBLE_SIZE / 2;
+
+  const minY = TOP_MARGIN + BUBBLE_SIZE / 2;
+  const maxY = gameAreaSize.height - BOTTOM_MARGIN - BUBBLE_SIZE / 2;
+
+  // If layout is too tight for our margins, fall back to center
+  if (minX >= maxX || minY >= maxY) {
+    return {
+      x: gameAreaSize.width / 2,
+      y: gameAreaSize.height / 2,
+    };
+  }
+
+  return {
+    x: Math.random() * (maxX - minX) + minX,
+    y: Math.random() * (maxY - minY) + minY,
   };
+};
+
+
 
   const startGame = async () => {
     console.log('🔄 REFLEXES TEST: Starting game with pre-validation...');
@@ -110,7 +114,12 @@ export default function ReflexesTestScreen() {
   const startGameNow = () => {
     setGameState('playing');
     setScore(0);
+    setHits(0);
+    setMisses(0);
+    setTotalTargets(1);
+    setReactionTimes([]);
     setTimeLeft(TEST_DURATION / 1000);
+    lastBubbleTime.current = Date.now();
     setBubblePosition(generateRandomPosition());
     
     // Start countdown timer
@@ -146,13 +155,21 @@ export default function ReflexesTestScreen() {
         const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
         const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
         
+        const accuracy = totalTargets > 0 ? hits / totalTargets : 0;
+        const avgReactionTime = reactionTimes.length > 0 
+          ? reactionTimes.reduce((a, b) => a + b, 0) / reactionTimes.length 
+          : 0;
+        
         const rawData = {
           finalScore: score,
           testDuration: TEST_DURATION / 1000,
-          bubblesHit: score > 0 ? score : 0,
-          misses: score < 0 ? Math.abs(score) : 0
+          bubblesHit: hits,
+          misses: misses,
+          totalTargets,
+          accuracy,
+          speed: avgReactionTime
         };
-        await saveCognitiveTestResult('reflexes', score, rawData, TEST_DURATION / 1000, studyId, supplementLogId);
+        await saveCognitiveTestResult('reflexes', score, rawData, TEST_DURATION / 1000, studyId, supplementLogId, accuracy, avgReactionTime);
         
         // Mark scheduled test as completed if this was for a study
         if (scheduledTest) {
@@ -178,14 +195,19 @@ export default function ReflexesTestScreen() {
 
   const handleBubbleTap = () => {
     if (gameState === 'playing') {
+      const reactionTime = Date.now() - lastBubbleTime.current;
+      setReactionTimes(prev => [...prev, reactionTime]);
+      setHits(prev => prev + 1);
       setScore(prev => prev + 1);
+      setTotalTargets(prev => prev + 1);
+      lastBubbleTime.current = Date.now();
       setBubblePosition(generateRandomPosition());
     }
   };
 
   const handleScreenTap = () => {
     if (gameState === 'playing') {
-      // This is a miss - deduct point
+      setMisses(prev => prev + 1);
       setScore(prev => prev - 1);
     }
   };
@@ -216,11 +238,8 @@ export default function ReflexesTestScreen() {
                 clearInterval(countdownTimer.current);
               }
               
-              // Handle sequence navigation
-              if (params.sequence === 'all-nine') {
+              if (params.sequence === 'all-seven') {
                 router.push('/tests/all-nine');
-              } else if (params.sequence === 'all-three') {
-                router.push('/tests/all-three');
               } else {
                 router.push('/cognitive-tests');
               }
@@ -229,11 +248,8 @@ export default function ReflexesTestScreen() {
         ]
       );
     } else {
-      // Handle sequence navigation for non-playing states
-      if (params.sequence === 'all-nine') {
+      if (params.sequence === 'all-seven') {
         router.push('/tests/all-nine');
-      } else if (params.sequence === 'all-three') {
-        router.push('/tests/all-three');
       } else {
         router.push('/cognitive-tests');
       }
@@ -245,10 +261,8 @@ export default function ReflexesTestScreen() {
   };
 
   const handleNextTestOrFinish = () => {
-    if (params.sequence === 'all-nine') {
-      router.push('/tests/memory?sequence=all-nine');
-    } else if (params.sequence === 'all-three') {
-      router.push('/tests/memory?sequence=all-three');
+    if (params.sequence === 'all-seven') {
+      router.push('/tests/memory?sequence=all-seven');
     } else {
       router.push('/cognitive-tests');
     }
@@ -304,10 +318,10 @@ export default function ReflexesTestScreen() {
       <ThemedView style={styles.container} safeArea>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.instructionsContainer}>
-          {(params.sequence === 'all-nine' || params.sequence === 'all-three') && (
+          {params.sequence === 'all-seven' && (
             <ThemedView style={[styles.progressBanner, { backgroundColor: tintColor + '15', borderColor: tintColor }]}>
               <ThemedText style={[styles.progressText, { color: tintColor }]}>
-                {params.sequence === 'all-nine' ? 'Test 1 of 9' : 'Test 1 of 3'} • Run All Tests Mode
+                Test 1 of 7 • Run All Tests Mode
               </ThemedText>
             </ThemedView>
           )}
@@ -354,16 +368,16 @@ export default function ReflexesTestScreen() {
           <ThemedView style={styles.resultsContainer}>
           <ThemedText type="title" style={styles.title}>Test Complete!</ThemedText>
           <ThemedText style={styles.finalScore}>Final Score: {score}</ThemedText>
-          <ThemedText style={styles.metricText}>Bubbles Hit: {score > 0 ? score : 0}</ThemedText>
-          <ThemedText style={styles.metricText}>Misses: {score < 0 ? Math.abs(score) : 0}</ThemedText>
+          <ThemedText style={styles.metricText}>Accuracy: {totalTargets > 0 ? ((hits / totalTargets) * 100).toFixed(1) : '0'}% | Speed: {reactionTimes.length > 0 ? (reactionTimes.reduce((a, b) => a + b, 0) / reactionTimes.length).toFixed(0) : '0'}ms</ThemedText>
+          <ThemedText style={styles.metricText}>Bubbles Hit: {hits}</ThemedText>
+          <ThemedText style={styles.metricText}>Misses: {misses}</ThemedText>
           <ThemedText style={styles.metricText}>Test Duration: {TEST_DURATION / 1000}s</ThemedText>
-          <ThemedText style={styles.metricText}>Accuracy: {score > 0 ? ((score / (score + Math.abs(score < 0 ? score : 0))) * 100).toFixed(1) : '0'}%</ThemedText>
           <ThemedText style={styles.resultMessage}>
             {score >= 15 ? 'Excellent reflexes!' : 
              score >= 10 ? 'Good performance!' : 
              score >= 5 ? 'Not bad!' : 'Keep practicing!'}
           </ThemedText>
-          {(params.sequence === 'all-nine' || params.sequence === 'all-three') ? (
+          {params.sequence === 'all-seven' ? (
             <>
               <TouchableOpacity 
                 style={[styles.startButton, { backgroundColor: tintColor }]} 
@@ -415,7 +429,14 @@ export default function ReflexesTestScreen() {
         <View style={styles.headerSpacer} />
       </ThemedView>
       
-      <View style={styles.gameArea}>
+      <View
+  style={styles.gameArea}
+  onLayout={(event) => {
+    const { width, height } = event.nativeEvent.layout;
+    setGameAreaSize({ width, height });
+  }}
+>
+
         <TouchableOpacity
           style={[
             styles.bubble,

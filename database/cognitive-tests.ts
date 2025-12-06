@@ -2,9 +2,11 @@ import { withDatabase, getFallbackData, addFallbackData, getDatabase, checkDatab
 
 export interface CognitiveTestResult {
   id: number;
-  test_type: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'melody_repeater' | 'tile_puzzle' | 'trail_maker' | 'n_back';
+  test_type: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back';
   timestamp: number;
   score: number;
+  accuracy: number;
+  speed: number;
   raw_data?: string;
   completion_time?: number;
   study_id?: number;
@@ -12,12 +14,14 @@ export interface CognitiveTestResult {
 }
 
 export const saveCognitiveTestResult = async (
-  testType: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'melody_repeater' | 'tile_puzzle' | 'trail_maker' | 'n_back',
+  testType: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back',
   score: number,
   rawData?: any,
   completionTime?: number,
   studyId?: number,
-  supplementLogId?: number
+  supplementLogId?: number,
+  accuracy?: number,
+  speed?: number
 ): Promise<number> => {
   const timestamp = Math.floor(Date.now() / 1000);
   const operationId = `save-${testType}-${timestamp}`;
@@ -62,6 +66,8 @@ export const saveCognitiveTestResult = async (
       test_type: testType,
       timestamp,
       score,
+      accuracy: accuracy ?? (rawData?.accuracy ?? 0),
+      speed: speed ?? (rawData?.speed ?? completionTime ?? 0),
       raw_data: rawData ? JSON.stringify(rawData) : null,
       completion_time: completionTime || null,
       study_id: studyId || null,
@@ -71,7 +77,7 @@ export const saveCognitiveTestResult = async (
     console.log(`✅ [${operationId}] STEP 4 COMPLETE: Data preparation complete`);
     
     return await withDatabase(
-      async (db) => {
+      async () => {
         console.log(`🔄 [${operationId}] STEP 5: Executing AsyncStorage insert...`);
         try {
           const insertId = await asyncStorageAdd('cognitive_test_results', insertData);
@@ -127,11 +133,11 @@ export const saveCognitiveTestResult = async (
 };
 
 export const getCognitiveTestResults = async (
-  testType?: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'melody_repeater' | 'tile_puzzle' | 'trail_maker' | 'n_back',
+  testType?: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back',
   limit?: number
 ): Promise<CognitiveTestResult[]> => {
   return await withDatabase(
-    async (db) => {
+    async () => {
       let results = await asyncStorageGet('cognitive_test_results');
       
       if (testType) {
@@ -173,12 +179,12 @@ export const getCognitiveTestResults = async (
 };
 
 export const getTestResultsOlderThan24Hours = async (
-  testType?: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'melody_repeater' | 'tile_puzzle' | 'trail_maker' | 'n_back'
+  testType?: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back'
 ): Promise<CognitiveTestResult[]> => {
   const twentyFourHoursAgo = Math.floor(Date.now() / 1000) - (24 * 60 * 60);
   
   return await withDatabase(
-    async (db) => {
+    async () => {
       let results = await asyncStorageGet('cognitive_test_results');
       
       results = results.filter((result: any) => result.timestamp < twentyFourHoursAgo);

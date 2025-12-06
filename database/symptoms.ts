@@ -1,4 +1,4 @@
-import { withDatabase, getFallbackData, addFallbackData, updateFallbackData, deleteFallbackData, isFallbackMode } from './database';
+import { withDatabase, getFallbackData, addFallbackData, updateFallbackData, deleteFallbackData } from './database';
 
 export interface Symptom {
   id: number;
@@ -342,54 +342,9 @@ export const getSymptomStats = async (symptomId: number): Promise<{
   }
 };
 
-// Initialize symptoms table with default symptoms if empty
 export const initializeDefaultSymptoms = async (): Promise<void> => {
-  try {
-    if (isFallbackMode()) {
-      console.log('Fallback mode - default symptoms already initialized');
-      return;
-    }
-    
-    await withDatabase(
-      async (db) => {
-        // Check if symptoms table has any data
-        const count = await db.getFirstAsync('SELECT COUNT(*) as count FROM symptoms');
-        if ((count as any)?.count > 0) {
-          return; // Already has symptoms
-        }
-        
-        // Add default symptoms for each body region
-        const defaultSymptoms = [
-          { region: 'head', symptoms: ['Headache', 'Dizziness', 'Eye strain', 'Jaw pain'] },
-          { region: 'thorax', symptoms: ['Chest pain', 'Shortness of breath', 'Cough', 'Heart palpitations'] },
-          { region: 'abdomen', symptoms: ['Stomach ache', 'Nausea', 'Bloating', 'Indigestion'] },
-          { region: 'pelvis', symptoms: ['Lower back pain', 'Hip pain', 'Pelvic discomfort'] },
-          { region: 'arms', symptoms: ['Arm pain', 'Shoulder pain', 'Muscle tension', 'Joint stiffness'] },
-          { region: 'hands', symptoms: ['Wrist pain', 'Finger pain', 'Hand numbness', 'Joint stiffness'] },
-          { region: 'legs', symptoms: ['Leg pain', 'Knee pain', 'Muscle cramps', 'Restless legs'] },
-          { region: 'feet', symptoms: ['Foot pain', 'Ankle pain', 'Heel pain', 'Toe pain'] }
-        ];
-        
-        const timestamp = Math.floor(Date.now() / 1000);
-        
-        for (const { region, symptoms } of defaultSymptoms) {
-          for (const symptom of symptoms) {
-            await db.runAsync(
-              'INSERT INTO symptoms (body_region, description, last_used) VALUES (?, ?, ?)',
-              [region, symptom, timestamp]
-            );
-          }
-        }
-        
-        console.log('Default symptoms initialized successfully');
-      },
-      'initializeDefaultSymptoms',
-      async () => {
-        // Fallback mode - symptoms already initialized in fallback data
-        console.log('Fallback mode - default symptoms already available');
-      }
-    );
-  } catch (error) {
-    console.error('Failed to initialize default symptoms:', error);
-  }
+  // Default symptom prepopulation disabled – all symptoms are user-created now.
+  console.log(
+    'initializeDefaultSymptoms: default seeding disabled; using only custom symptoms.',
+  );
 };

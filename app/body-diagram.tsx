@@ -24,8 +24,8 @@ export default function BodyDiagramScreen() {
     <ThemedView style={styles.container} safeArea>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <ThemedView style={styles.header}>
-        <ThemedText type="title" style={styles.title}>Select Body Region</ThemedText>
-        <ThemedText style={styles.subtitle}>Tap the area where you're experiencing symptoms</ThemedText>
+        <ThemedText type="title" style={styles.title}>{"Select Body Region"}</ThemedText>
+        <ThemedText style={styles.subtitle}>{"Tap the area where you&apos;re experiencing symptoms"}</ThemedText>
       </ThemedView>
 
       <ThemedView style={styles.diagramContainer}>
@@ -35,7 +35,7 @@ export default function BodyDiagramScreen() {
             style={[styles.bodyRegion, styles.head]} 
             onPress={() => handleRegionPress('head')}
           >
-            <ThemedText style={styles.regionText}>Head</ThemedText>
+            <ThemedText style={styles.regionText}>{"Head"}</ThemedText>
           </TouchableOpacity>
 
           {/* Thorax */}
@@ -43,7 +43,7 @@ export default function BodyDiagramScreen() {
             style={[styles.bodyRegion, styles.thorax]} 
             onPress={() => handleRegionPress('thorax')}
           >
-            <ThemedText style={styles.regionText}>Thorax</ThemedText>
+            <ThemedText style={styles.regionText}>{"Thorax"}</ThemedText>
           </TouchableOpacity>
 
           {/* Arms */}
@@ -51,13 +51,13 @@ export default function BodyDiagramScreen() {
             style={[styles.bodyRegion, styles.leftArm]} 
             onPress={() => handleRegionPress('arms')}
           >
-            <ThemedText style={styles.regionText}>Arms</ThemedText>
+            <ThemedText style={styles.regionText}>{"Arms"}</ThemedText>
           </TouchableOpacity>
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.rightArm]} 
             onPress={() => handleRegionPress('arms')}
           >
-            <ThemedText style={styles.regionText}>Arms</ThemedText>
+            <ThemedText style={styles.regionText}>{"Arms"}</ThemedText>
           </TouchableOpacity>
 
           {/* Hands */}
@@ -65,13 +65,13 @@ export default function BodyDiagramScreen() {
             style={[styles.bodyRegion, styles.leftHand]} 
             onPress={() => handleRegionPress('hands')}
           >
-            <ThemedText style={styles.regionTextSmall}>Hands</ThemedText>
+            <ThemedText style={styles.regionTextSmall}>{"Hands"}</ThemedText>
           </TouchableOpacity>
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.rightHand]} 
             onPress={() => handleRegionPress('hands')}
           >
-            <ThemedText style={styles.regionTextSmall}>Hands</ThemedText>
+            <ThemedText style={styles.regionTextSmall}>{"Hands"}</ThemedText>
           </TouchableOpacity>
 
           {/* Abdomen */}
@@ -79,7 +79,7 @@ export default function BodyDiagramScreen() {
             style={[styles.bodyRegion, styles.abdomen]} 
             onPress={() => handleRegionPress('abdomen')}
           >
-            <ThemedText style={styles.regionText}>Abdomen</ThemedText>
+            <ThemedText style={styles.regionText}>{"Abdomen"}</ThemedText>
           </TouchableOpacity>
 
           {/* Pelvis */}
@@ -87,7 +87,7 @@ export default function BodyDiagramScreen() {
             style={[styles.bodyRegion, styles.pelvis]} 
             onPress={() => handleRegionPress('pelvis')}
           >
-            <ThemedText style={styles.regionText}>Pelvis</ThemedText>
+            <ThemedText style={styles.regionText}>{"Pelvis"}</ThemedText>
           </TouchableOpacity>
 
           {/* Legs */}
@@ -95,13 +95,13 @@ export default function BodyDiagramScreen() {
             style={[styles.bodyRegion, styles.leftLeg]} 
             onPress={() => handleRegionPress('legs')}
           >
-            <ThemedText style={styles.regionText}>Legs</ThemedText>
+            <ThemedText style={styles.regionText}>{"Legs"}</ThemedText>
           </TouchableOpacity>
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.rightLeg]} 
             onPress={() => handleRegionPress('legs')}
           >
-            <ThemedText style={styles.regionText}>Legs</ThemedText>
+            <ThemedText style={styles.regionText}>{"Legs"}</ThemedText>
           </TouchableOpacity>
 
           {/* Feet */}
@@ -109,13 +109,13 @@ export default function BodyDiagramScreen() {
             style={[styles.bodyRegion, styles.leftFoot]} 
             onPress={() => handleRegionPress('feet')}
           >
-            <ThemedText style={styles.regionTextSmall}>Feet</ThemedText>
+            <ThemedText style={styles.regionTextSmall}>{"Feet"}</ThemedText>
           </TouchableOpacity>
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.rightFoot]} 
             onPress={() => handleRegionPress('feet')}
           >
-            <ThemedText style={styles.regionTextSmall}>Feet</ThemedText>
+            <ThemedText style={styles.regionTextSmall}>{"Feet"}</ThemedText>
           </TouchableOpacity>
         </View>
       </ThemedView>
@@ -124,7 +124,7 @@ export default function BodyDiagramScreen() {
           style={styles.backButton} 
           onPress={() => router.back()}
         >
-          <ThemedText style={styles.backButtonText}>Back to Home</ThemedText>
+          <ThemedText style={styles.backButtonText}>{"Back to Home"}</ThemedText>
         </TouchableOpacity>
       </ScrollView>
     </ThemedView>

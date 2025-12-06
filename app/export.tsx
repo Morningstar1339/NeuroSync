@@ -10,15 +10,6 @@ import * as Sharing from 'expo-sharing';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { 
   exportAllData, 
-  exportSupplements, 
-  exportSupplementLogs, 
-  exportSymptoms, 
-  exportSymptomLogs,
-  exportCognitiveTestResults,
-  exportSleepLogs,
-  exportSchedules,
-  exportExclusions,
-  exportStudyProtocols,
   getExportStats,
   ExportOptions
 } from '@/database/export';
@@ -83,7 +74,11 @@ export default function ExportScreen() {
 
   const writeAndShareFile = async (filename: string, content: string) => {
     try {
-      const fileUri = FileSystem.documentDirectory + filename;
+      const docDir =
+	  (FileSystem as any).documentDirectory ??
+	  (FileSystem as any).cacheDirectory ??
+	  '';
+	const fileUri = docDir + filename;
       await FileSystem.writeAsStringAsync(fileUri, content);
       
       if (await Sharing.isAvailableAsync()) {
@@ -94,59 +89,6 @@ export default function ExportScreen() {
     } catch (error) {
       console.error('Failed to save file:', error);
       Alert.alert('Export Error', 'Failed to save the export file.');
-    }
-  };
-
-  const exportSingleTable = async (tableKey: string) => {
-    setIsExporting(true);
-    try {
-      const options: ExportOptions = {};
-      if (startDate) options.startDate = startDate;
-      if (endDate) options.endDate = endDate;
-
-      let csvContent = '';
-      const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-      
-      switch (tableKey) {
-        case 'supplements':
-          csvContent = await exportSupplements();
-          break;
-        case 'supplement_logs':
-          csvContent = await exportSupplementLogs(options);
-          break;
-        case 'symptoms':
-          csvContent = await exportSymptoms();
-          break;
-        case 'symptom_logs':
-          csvContent = await exportSymptomLogs(options);
-          break;
-        case 'cognitive_test_results':
-          csvContent = await exportCognitiveTestResults(options);
-          break;
-        case 'sleep_logs':
-          csvContent = await exportSleepLogs(options);
-          break;
-        case 'schedules':
-          csvContent = await exportSchedules();
-          break;
-        case 'exclusions':
-          csvContent = await exportExclusions();
-          break;
-        case 'study_protocols':
-          csvContent = await exportStudyProtocols();
-          break;
-        default:
-          throw new Error(`Unknown table: ${tableKey}`);
-      }
-
-      const filename = `neurosync_${tableKey}_${timestamp}.csv`;
-      await writeAndShareFile(filename, csvContent);
-      
-    } catch (error) {
-      console.error('Export failed:', error);
-      Alert.alert('Export Error', 'Failed to export data. Please try again.');
-    } finally {
-      setIsExporting(false);
     }
   };
 
@@ -212,16 +154,16 @@ export default function ExportScreen() {
         >
           <Ionicons name="home-outline" size={24} color={tintColor} />
         </TouchableOpacity>
-        <ThemedText type="title" style={styles.title}>Export Data</ThemedText>
+        <ThemedText type="title" style={styles.title}>{"Export Data"}</ThemedText>
         <View style={styles.headerPlaceholder} />
       </ThemedView>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Date Range Selection */}
         <ThemedView style={styles.section}>
-          <ThemedText type="subtitle" style={styles.sectionTitle}>Date Range (Optional)</ThemedText>
+          <ThemedText type="subtitle" style={styles.sectionTitle}>{"Date Range (Optional)"}</ThemedText>
           <ThemedText style={styles.sectionDescription}>
-            Leave empty to export all data, or set a range to filter time-based records.
+			  {"Leave empty to export all data, or set a range to filter time-based records."}
           </ThemedText>
           
           <View style={styles.dateRow}>
@@ -248,7 +190,7 @@ export default function ExportScreen() {
           
           {(startDate || endDate) && (
             <TouchableOpacity style={styles.clearButton} onPress={clearDateRange}>
-              <ThemedText style={[styles.clearButtonText, { color: tintColor }]}>Clear Date Range</ThemedText>
+              <ThemedText style={[styles.clearButtonText, { color: tintColor }]}>{"Clear Date Range"}</ThemedText>
             </TouchableOpacity>
           )}
         </ThemedView>
@@ -256,13 +198,13 @@ export default function ExportScreen() {
         {/* Table Selection */}
         <ThemedView style={styles.section}>
           <View style={styles.sectionHeader}>
-            <ThemedText type="subtitle" style={styles.sectionTitle}>Tables to Export</ThemedText>
+            <ThemedText type="subtitle" style={styles.sectionTitle}>{"Tables to Export"}</ThemedText>
             <View style={styles.selectionButtons}>
               <TouchableOpacity onPress={selectAllTables}>
-                <ThemedText style={[styles.selectionButtonText, { color: tintColor }]}>All</ThemedText>
+                <ThemedText style={[styles.selectionButtonText, { color: tintColor }]}>{"All"}</ThemedText>
               </TouchableOpacity>
               <TouchableOpacity onPress={selectNone}>
-                <ThemedText style={[styles.selectionButtonText, { color: tintColor }]}>None</ThemedText>
+                <ThemedText style={[styles.selectionButtonText, { color: tintColor }]}>{"None"}</ThemedText>
               </TouchableOpacity>
             </View>
           </View>
@@ -312,7 +254,7 @@ export default function ExportScreen() {
           </TouchableOpacity>
 
           <ThemedText style={styles.exportNote}>
-            CSV files will be saved and shared using your device's sharing options. 
+            CSV files will be saved and shared using your device&apos;s sharing options. 
             Timestamps are included in both Unix format and human-readable format.
           </ThemedText>
         </ThemedView>
@@ -325,6 +267,7 @@ export default function ExportScreen() {
           mode="date"
           display="default"
           onChange={(event, selectedDate) => {
+			  void event; 
             setShowStartDatePicker(false);
             if (selectedDate) {
               setStartDate(selectedDate);
@@ -339,6 +282,7 @@ export default function ExportScreen() {
           mode="date"
           display="default"
           onChange={(event, selectedDate) => {
+			  void event;
             setShowEndDatePicker(false);
             if (selectedDate) {
               setEndDate(selectedDate);
