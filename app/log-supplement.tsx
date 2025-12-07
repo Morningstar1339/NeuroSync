@@ -19,6 +19,8 @@ export default function LogSupplementScreen() {
   const [showDateTimePicker, setShowDateTimePicker] = useState(false);
   const [pendingPickerOpen, setPendingPickerOpen] = useState(false);
   const [tempTimestamp, setTempTimestamp] = useState(new Date());
+  const [androidPickerMode, setAndroidPickerMode] = useState<'date' | 'time' | null>(null);
+  const [androidTempDate, setAndroidTempDate] = useState(new Date());
   const [countdown, setCountdown] = useState(10);
   const [isCountdownActive, setIsCountdownActive] = useState(true);
   
@@ -224,13 +226,28 @@ export default function LogSupplementScreen() {
 
   const handleDateTimeChange = (_event: any, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
-      setShowDateTimePicker(false);
-      if (selectedDate) {
-        const maxTime = new Date();
-        const finalDate = selectedDate.getTime() > maxTime.getTime() ? maxTime : selectedDate;
-        setEditTimestamp(finalDate);
+      if (_event.type === 'dismissed') {
+        setAndroidPickerMode(null);
+        setShowEditModal(true);
+        return;
       }
-      setShowEditModal(true);
+      if (androidPickerMode === 'date' && selectedDate) {
+        setAndroidTempDate(selectedDate);
+        setAndroidPickerMode('time');
+      } else if (androidPickerMode === 'time' && selectedDate) {
+        const combinedDate = new Date(
+          androidTempDate.getFullYear(),
+          androidTempDate.getMonth(),
+          androidTempDate.getDate(),
+          selectedDate.getHours(),
+          selectedDate.getMinutes()
+        );
+        const maxTime = new Date();
+        const finalDate = combinedDate.getTime() > maxTime.getTime() ? maxTime : combinedDate;
+        setEditTimestamp(finalDate);
+        setAndroidPickerMode(null);
+        setShowEditModal(true);
+      }
     } else if (selectedDate) {
       const maxTime = new Date();
       const finalDate = selectedDate.getTime() > maxTime.getTime() ? maxTime : selectedDate;
@@ -241,7 +258,12 @@ export default function LogSupplementScreen() {
   const handleOpenDatePicker = () => {
     setTempTimestamp(editTimestamp);
     setShowEditModal(false);
-    setPendingPickerOpen(true);
+    if (Platform.OS === 'android') {
+      setAndroidTempDate(editTimestamp);
+      setAndroidPickerMode('date');
+    } else {
+      setPendingPickerOpen(true);
+    }
   };
 
   const handleConfirmDateTime = () => {
@@ -434,13 +456,21 @@ export default function LogSupplementScreen() {
           </View>
         </Modal>
       )}
-      {showDateTimePicker && Platform.OS === 'android' && (
+      {Platform.OS === 'android' && androidPickerMode === 'date' && (
         <DateTimePicker
-          value={editTimestamp}
-          mode="datetime"
+          value={androidTempDate}
+          mode="date"
           display="default"
           onChange={handleDateTimeChange}
           maximumDate={new Date()}
+        />
+      )}
+      {Platform.OS === 'android' && androidPickerMode === 'time' && (
+        <DateTimePicker
+          value={androidTempDate}
+          mode="time"
+          display="default"
+          onChange={handleDateTimeChange}
         />
       )}
     </ThemedView>
