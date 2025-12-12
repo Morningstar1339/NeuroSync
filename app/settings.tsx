@@ -230,6 +230,13 @@ export default function SettingsScreen() {
                 <ThemedText style={styles.debugButtonText}>Database Debug</ThemedText>
                 <ThemedText style={styles.debugButtonSubtext}>Diagnose database issues</ThemedText>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.debugButton, { marginTop: 8 }]}
+                onPress={() => router.push('/invariant-test' as any)}
+              >
+                <ThemedText style={styles.debugButtonText}>Invariant Tests</ThemedText>
+                <ThemedText style={styles.debugButtonSubtext}>Test database sanity checks</ThemedText>
+              </TouchableOpacity>
             </ThemedView>
 
             {/* Spacer to ensure buttons don't overlap content */}

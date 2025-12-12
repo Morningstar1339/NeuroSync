@@ -1,3 +1,5 @@
+// DISABLED FOR V1 - Re-enable for Mk II
+/*
 import React, { useState } from 'react';
 import { StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
@@ -280,3 +282,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 });
+*/
+
+export default function SymptomLoggingScreen() {
+  return null;
+}

@@ -8,17 +8,22 @@ import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
 
 const { height: screenHeight } = Dimensions.get('window');
-const BALL_SIZE = 50;
-// Removed RACK_POSITIONS as it's no longer needed - always 5 slots
 
-const COLORS = ['#FF3B30', '#007AFF', '#34C759', '#FFCC00', '#AF52DE'];
-const COLOR_NAMES = ['Red', 'Blue', 'Green', 'Yellow', 'Purple'];
+const COLORS = ['#FF3B30', '#007AFF', '#34C759', '#FFCC00', '#AF52DE', '#FF9500'];
+const SHAPES = ['●', '■', '▲', '◆', '★', '⬟'];
 
-interface Ball {
-  id: number;
-  color: string;
-  colorName: string;
+type PatternType = 'color_repeat' | 'shape_repeat' | 'alternating' | 'growing' | 'skip_one';
+
+interface SequenceItem {
   colorIndex: number;
+  shapeIndex: number;
+}
+
+interface PatternQuestion {
+  sequence: SequenceItem[];
+  correctAnswer: SequenceItem;
+  options: SequenceItem[];
+  patternType: PatternType;
 }
 
 export default function PatternMatcherTestScreen() {
@@ -27,85 +32,138 @@ export default function PatternMatcherTestScreen() {
   const tintColor = useThemeColor({}, 'tint');
   
   const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
-  const [targetPattern, setTargetPattern] = useState<Ball[]>([]);
-  const [playerRack, setPlayerRack] = useState<Ball[]>([]);
-  const [selectedPosition, setSelectedPosition] = useState<number | null>(null);
-  const [swapCount, setSwapCount] = useState(0);
-  const [matchCount, setMatchCount] = useState(0);
+  const [currentQuestion, setCurrentQuestion] = useState<PatternQuestion | null>(null);
+  const [questionNumber, setQuestionNumber] = useState(0);
+  const [correctAnswers, setCorrectAnswers] = useState(0);
+  const [totalQuestions] = useState(8);
+  const [selectedOption, setSelectedOption] = useState<number | null>(null);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [scheduledTest, setScheduledTest] = useState<any>(null);
   const [studyContext, setStudyContext] = useState<any>(null);
   const [activeTestSession, setActiveTestSession] = useState<any>(null);
+  const [questionTimes, setQuestionTimes] = useState<number[]>([]);
   
   const startTime = useRef<number>(0);
+  const questionStartTime = useRef<number>(0);
 
-  const generatePattern = (): Ball[] => {
-    // Always use all 5 colors in random order
-    const shuffledIndices = [0, 1, 2, 3, 4].sort(() => Math.random() - 0.5);
-    return shuffledIndices.map((colorIndex, i) => ({
-      id: i,
-      color: COLORS[colorIndex],
-      colorName: COLOR_NAMES[colorIndex],
-      colorIndex
-    }));
-  };
-
-  const createScrambledRack = (pattern: Ball[]): Ball[] => {
-    // Create all 5 colors, scrambled to ensure 0 initial matches
-    let scrambled: Ball[];
-    do {
-      const shuffledIndices = [0, 1, 2, 3, 4].sort(() => Math.random() - 0.5);
-      scrambled = shuffledIndices.map((colorIndex, i) => ({
-        id: i,
-        color: COLORS[colorIndex],
-        colorName: COLOR_NAMES[colorIndex],
-        colorIndex
-      }));
-    } while (checkMatches(scrambled, pattern) > 0); // Ensure 0 initial matches
+  const generatePattern = (): PatternQuestion => {
+    const patternTypes: PatternType[] = ['color_repeat', 'shape_repeat', 'alternating', 'growing', 'skip_one'];
+    const patternType = patternTypes[Math.floor(Math.random() * patternTypes.length)];
     
-    return scrambled;
-  };
-
-  const checkMatches = (rack: Ball[], pattern: Ball[]): number => {
-    let matches = 0;
-    for (let i = 0; i < 5; i++) {
-      if (rack[i]?.colorIndex === pattern[i]?.colorIndex) {
-        matches++;
+    let sequence: SequenceItem[] = [];
+    let correctAnswer: SequenceItem;
+    
+    switch (patternType) {
+      case 'color_repeat': {
+        const baseColor = Math.floor(Math.random() * COLORS.length);
+        const colorPattern = [baseColor, (baseColor + 1) % COLORS.length, (baseColor + 2) % COLORS.length];
+        for (let i = 0; i < 5; i++) {
+          sequence.push({
+            colorIndex: colorPattern[i % 3],
+            shapeIndex: 0
+          });
+        }
+        correctAnswer = {
+          colorIndex: colorPattern[5 % 3],
+          shapeIndex: 0
+        };
+        break;
+      }
+      
+      case 'shape_repeat': {
+        const baseShape = Math.floor(Math.random() * SHAPES.length);
+        const shapePattern = [baseShape, (baseShape + 1) % SHAPES.length];
+        const fixedColor = Math.floor(Math.random() * COLORS.length);
+        for (let i = 0; i < 5; i++) {
+          sequence.push({
+            colorIndex: fixedColor,
+            shapeIndex: shapePattern[i % 2]
+          });
+        }
+        correctAnswer = {
+          colorIndex: fixedColor,
+          shapeIndex: shapePattern[5 % 2]
+        };
+        break;
+      }
+      
+      case 'alternating': {
+        const color1 = Math.floor(Math.random() * COLORS.length);
+        const color2 = (color1 + 2) % COLORS.length;
+        const shape1 = Math.floor(Math.random() * SHAPES.length);
+        const shape2 = (shape1 + 1) % SHAPES.length;
+        for (let i = 0; i < 5; i++) {
+          sequence.push({
+            colorIndex: i % 2 === 0 ? color1 : color2,
+            shapeIndex: i % 2 === 0 ? shape1 : shape2
+          });
+        }
+        correctAnswer = {
+          colorIndex: 5 % 2 === 0 ? color1 : color2,
+          shapeIndex: 5 % 2 === 0 ? shape1 : shape2
+        };
+        break;
+      }
+      
+      case 'growing': {
+        const startColor = Math.floor(Math.random() * 3);
+        const fixedShape = Math.floor(Math.random() * SHAPES.length);
+        for (let i = 0; i < 5; i++) {
+          sequence.push({
+            colorIndex: (startColor + i) % COLORS.length,
+            shapeIndex: fixedShape
+          });
+        }
+        correctAnswer = {
+          colorIndex: (startColor + 5) % COLORS.length,
+          shapeIndex: fixedShape
+        };
+        break;
+      }
+      
+      case 'skip_one': {
+        const startShape = Math.floor(Math.random() * SHAPES.length);
+        const fixedColor = Math.floor(Math.random() * COLORS.length);
+        for (let i = 0; i < 5; i++) {
+          sequence.push({
+            colorIndex: fixedColor,
+            shapeIndex: (startShape + i * 2) % SHAPES.length
+          });
+        }
+        correctAnswer = {
+          colorIndex: fixedColor,
+          shapeIndex: (startShape + 5 * 2) % SHAPES.length
+        };
+        break;
       }
     }
-    return matches;
-  };
-
-  // Removed isPatternComplete as it's now handled directly in updateMatchCount
-
-  const handleBallPress = (position: number) => {
-    if (selectedPosition === null) {
-      // First tap - select the ball
-      setSelectedPosition(position);
-    } else if (selectedPosition === position) {
-      // Tap same ball - deselect
-      setSelectedPosition(null);
-    } else {
-      // Second tap - swap balls
-      const newRack = [...playerRack];
-      [newRack[selectedPosition], newRack[position]] = [newRack[position], newRack[selectedPosition]];
-      setPlayerRack(newRack);
-      setSelectedPosition(null);
-      setSwapCount(prev => prev + 1);
-      
-      // Update match count with new rack
-      const newMatches = checkMatches(newRack, targetPattern);
-      setMatchCount(newMatches);
-      
-      if (newMatches === 5) {
-        endGame();
+    
+    const options: SequenceItem[] = [correctAnswer];
+    while (options.length < 4) {
+      const wrongOption: SequenceItem = {
+        colorIndex: Math.floor(Math.random() * COLORS.length),
+        shapeIndex: Math.floor(Math.random() * SHAPES.length)
+      };
+      const isDuplicate = options.some(
+        opt => opt.colorIndex === wrongOption.colorIndex && opt.shapeIndex === wrongOption.shapeIndex
+      );
+      if (!isDuplicate) {
+        options.push(wrongOption);
       }
     }
+    
+    for (let i = options.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [options[i], options[j]] = [options[j], options[i]];
+    }
+    
+    return { sequence, correctAnswer, options, patternType };
   };
 
   const startGame = async () => {
     try {
       const activeSession = await isUserInActiveTestSession();
-if (activeSession.isActive && String(activeSession.activeTest?.test_type) !== 'pattern_matcher') {
+      if (activeSession.isActive && String(activeSession.activeTest?.test_type) !== 'pattern_matcher') {
         Alert.alert(
           'Test Session Active',
           `You have an active ${activeSession.activeTest?.test_type} test (${Math.ceil(activeSession.timeRemaining || 0)}s remaining). Starting another test may affect your results.\n\nContinue anyway?`,
@@ -124,40 +182,72 @@ if (activeSession.isActive && String(activeSession.activeTest?.test_type) !== 'p
   };
 
   const startGameNow = () => {
-    const pattern = generatePattern();
-    
     setGameState('playing');
-    setTargetPattern(pattern);
-    setPlayerRack(createScrambledRack(pattern));
-    setSelectedPosition(null);
-    setSwapCount(0);
-    setMatchCount(0);
+    setQuestionNumber(1);
+    setCorrectAnswers(0);
+    setSelectedOption(null);
+    setShowFeedback(false);
+    setQuestionTimes([]);
+    setCurrentQuestion(generatePattern());
     startTime.current = Date.now();
+    questionStartTime.current = Date.now();
   };
 
-const endGame = useCallback(async () => {
+  const handleOptionSelect = (optionIndex: number) => {
+    if (showFeedback) return;
+    
+    setSelectedOption(optionIndex);
+    setShowFeedback(true);
+    
+    const questionTime = (Date.now() - questionStartTime.current) / 1000;
+    setQuestionTimes(prev => [...prev, questionTime]);
+    
+    const selectedItem = currentQuestion!.options[optionIndex];
+    const isCorrect = 
+      selectedItem.colorIndex === currentQuestion!.correctAnswer.colorIndex &&
+      selectedItem.shapeIndex === currentQuestion!.correctAnswer.shapeIndex;
+    
+    if (isCorrect) {
+      setCorrectAnswers(prev => prev + 1);
+    }
+    
+    setTimeout(() => {
+      if (questionNumber >= totalQuestions) {
+        endGame(isCorrect ? correctAnswers + 1 : correctAnswers);
+      } else {
+        setQuestionNumber(prev => prev + 1);
+        setCurrentQuestion(generatePattern());
+        setSelectedOption(null);
+        setShowFeedback(false);
+        questionStartTime.current = Date.now();
+      }
+    }, 1200);
+  };
+
+  const endGame = useCallback(async (finalCorrect: number) => {
     setGameState('finished');
     
     const completionTime = (Date.now() - startTime.current) / 1000;
-    
-    const accuracy = 1.0;
-    const speed = completionTime;
+    const accuracy = finalCorrect / totalQuestions;
+    const avgSpeed = questionTimes.length > 0 
+      ? questionTimes.reduce((a, b) => a + b, 0) / questionTimes.length 
+      : completionTime / totalQuestions;
     
     const rawData = {
       completionTime,
-      swapCount,
-      patternColors: targetPattern.map(ball => ball.colorName),
-      finalMatches: 5,
+      correctAnswers: finalCorrect,
+      totalQuestions,
       accuracy,
-      speed
+      avgResponseTime: avgSpeed,
+      questionTimes
     };
     
     try {
       const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
       const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
       
-      const score = Math.max(0, Math.floor(100 - (swapCount * 2) - (completionTime / 2)));
-      await saveCognitiveTestResult('pattern_matcher', score, rawData, completionTime, studyId, supplementLogId, accuracy, speed);
+      const score = Math.round(accuracy * 100);
+      await saveCognitiveTestResult('pattern_matcher', score, rawData, completionTime, studyId, supplementLogId, accuracy, avgSpeed);
       
       if (scheduledTest) {
         await completeScheduledTest(scheduledTest.id);
@@ -165,7 +255,7 @@ const endGame = useCallback(async () => {
     } catch (error) {
       console.error('Failed to save pattern matcher test result:', error);
     }
-}, [scheduledTest, studyContext, swapCount, targetPattern]);
+  }, [scheduledTest, studyContext, totalQuestions, questionTimes]);
 
   const handleBackToMenu = () => {
     if (params.sequence === 'all-seven') {
@@ -209,17 +299,30 @@ const endGame = useCallback(async () => {
     checkTestStatus();
   }, []);
 
-  // Initialize match count when rack or pattern changes
-  useEffect(() => {
-    if (playerRack.length > 0 && targetPattern.length > 0) {
-      const matches = checkMatches(playerRack, targetPattern);
-      setMatchCount(matches);
-      
-      if (matches === 5) {
-        endGame();
-      }
-    }
-  }, [endGame, playerRack, targetPattern]);
+  const renderSequenceItem = (item: SequenceItem, index: number, isOption: boolean = false, optionIndex?: number) => {
+    const isSelected = isOption && selectedOption === optionIndex;
+    const isCorrectAnswer = isOption && showFeedback && currentQuestion && 
+      item.colorIndex === currentQuestion.correctAnswer.colorIndex &&
+      item.shapeIndex === currentQuestion.correctAnswer.shapeIndex;
+    const isWrongSelection = isOption && showFeedback && isSelected && !isCorrectAnswer;
+    
+    return (
+      <View
+        key={index}
+        style={[
+          styles.sequenceItem,
+          isOption && styles.optionItem,
+          isSelected && !showFeedback && styles.selectedOption,
+          isCorrectAnswer && showFeedback && styles.correctOption,
+          isWrongSelection && styles.wrongOption
+        ]}
+      >
+        <ThemedText style={[styles.shapeText, { color: COLORS[item.colorIndex] }]}>
+          {SHAPES[item.shapeIndex]}
+        </ThemedText>
+      </View>
+    );
+  };
 
   if (gameState === 'ready') {
     return (
@@ -242,12 +345,11 @@ const endGame = useCallback(async () => {
               </ThemedView>
             )}
             <ThemedText style={styles.instructions}>
-              Match the target pattern by swapping balls!{'\n\n'}
-              🎯 Study the target pattern of 5 colors{'\n'}
-              👆 Tap a ball to select it (highlighted){'\n'}
-              🔄 Tap another ball to swap their positions{'\n'}
-              📊 Get live feedback on your matches{'\n'}
-              ✅ Complete when all 5 colors match!
+              Find the hidden pattern!{'\n\n'}
+              🔍 Study the sequence of shapes{'\n'}
+              🧠 Figure out the underlying rule{'\n'}
+              ❓ Select what comes next{'\n'}
+              ⏱️ {totalQuestions} questions total
             </ThemedText>
             <TouchableOpacity 
               style={[styles.startButton, { backgroundColor: tintColor }]} 
@@ -266,20 +368,20 @@ const endGame = useCallback(async () => {
 
   if (gameState === 'finished') {
     const completionTime = (Date.now() - startTime.current) / 1000;
+    const accuracy = Math.round((correctAnswers / totalQuestions) * 100);
     
     return (
       <ThemedView style={styles.container} safeArea>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.resultsContainer}>
-            <ThemedText type="title" style={styles.title}>Pattern Solved!</ThemedText>
-            <ThemedText style={styles.finalScore}>Pattern Matched!</ThemedText>
-            <ThemedText style={styles.metricText}>Accuracy: 100% | Speed: {completionTime.toFixed(1)}s</ThemedText>
-            <ThemedText style={styles.metricText}>Total Swaps: {swapCount}</ThemedText>
-            <ThemedText style={styles.metricText}>Pattern: {targetPattern.map(b => b.colorName).join(', ')}</ThemedText>
+            <ThemedText type="title" style={styles.title}>Test Complete!</ThemedText>
+            <ThemedText style={styles.finalScore}>{correctAnswers} / {totalQuestions}</ThemedText>
+            <ThemedText style={styles.metricText}>Accuracy: {accuracy}%</ThemedText>
+            <ThemedText style={styles.metricText}>Time: {completionTime.toFixed(1)}s</ThemedText>
             <ThemedText style={styles.resultMessage}>
-              {swapCount <= 8 ? 'Excellent problem solving!' : 
-               swapCount <= 15 ? 'Good logical thinking!' : 
-               swapCount <= 25 ? 'Nice work!' : 'Keep practicing!'}
+              {accuracy >= 90 ? 'Excellent pattern recognition!' : 
+               accuracy >= 70 ? 'Good analytical thinking!' : 
+               accuracy >= 50 ? 'Keep practicing!' : 'Try focusing on the sequence changes'}
             </ThemedText>
             {params.sequence === 'all-seven' ? (
               <>
@@ -316,50 +418,34 @@ const endGame = useCallback(async () => {
     <ThemedView style={styles.container} safeArea>
       <ScrollView contentContainerStyle={styles.gameScrollContent} showsVerticalScrollIndicator={false}>
         <ThemedView style={styles.gameHeader}>
-          <ThemedText style={styles.timer}>Swaps: {swapCount}</ThemedText>
-          <ThemedText style={[styles.matchInfo, matchCount === 5 ? styles.completeText : {}]}>
-            {matchCount} matches{matchCount === 5 ? ' - Complete!' : ''}
-          </ThemedText>
+          <ThemedText style={styles.questionCounter}>Question {questionNumber}/{totalQuestions}</ThemedText>
+          <ThemedText style={styles.scoreText}>{correctAnswers} correct</ThemedText>
         </ThemedView>
         
         <ThemedView style={styles.patternSection}>
-          <ThemedText style={styles.sectionTitle}>Target Pattern:</ThemedText>
-          <View style={styles.targetPattern}>
-            {targetPattern.map((ball, index) => (
-              <View key={index} style={[styles.ball, { backgroundColor: ball.color }]} />
-            ))}
+          <ThemedText style={styles.sectionTitle}>What comes next?</ThemedText>
+          <View style={styles.sequenceContainer}>
+            {currentQuestion?.sequence.map((item, index) => renderSequenceItem(item, index))}
+            <View style={styles.questionMark}>
+              <ThemedText style={styles.questionMarkText}>?</ThemedText>
+            </View>
           </View>
         </ThemedView>
 
-        <ThemedView style={styles.rackSection}>
-          <ThemedText style={styles.sectionTitle}>Your Rack:</ThemedText>
-          <View style={styles.playerRack}>
-            {playerRack.map((ball, index) => {
-              const isCorrectPosition = ball.colorIndex === targetPattern[index].colorIndex;
-              const isSelected = selectedPosition === index;
-              
-              return (
-                <TouchableOpacity
-                  key={index}
-                  style={[
-                    styles.rackPosition,
-                    { 
-                      backgroundColor: ball.color,
-                      borderColor: isSelected ? '#FFD700' : (isCorrectPosition ? '#34C759' : '#ccc'),
-                      borderWidth: isSelected ? 5 : (isCorrectPosition ? 3 : 1),
-                      transform: isSelected ? [{scale: 1.1}] : [{scale: 1}],
-                      shadowOpacity: isSelected ? 0.4 : 0.2,
-                      elevation: isSelected ? 8 : 2,
-                    }
-                  ]}
-                  onPress={() => handleBallPress(index)}
-                />
-              );
-            })}
+        <ThemedView style={styles.optionsSection}>
+          <ThemedText style={styles.sectionTitle}>Select your answer:</ThemedText>
+          <View style={styles.optionsGrid}>
+            {currentQuestion?.options.map((option, index) => (
+              <TouchableOpacity
+                key={index}
+                onPress={() => handleOptionSelect(index)}
+                disabled={showFeedback}
+                style={styles.optionTouchable}
+              >
+                {renderSequenceItem(option, index, true, index)}
+              </TouchableOpacity>
+            ))}
           </View>
-          <ThemedText style={styles.rackHint}>
-            {selectedPosition !== null ? 'Now tap another ball to swap' : 'Tap a ball to select it'}
-          </ThemedText>
         </ThemedView>
 
         <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
@@ -439,77 +525,98 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     marginBottom: 20,
   },
-  timer: {
+  questionCounter: {
     fontSize: 18,
     fontWeight: '600',
   },
-  matchInfo: {
+  scoreText: {
     fontSize: 18,
     fontWeight: '600',
-  },
-  completeText: {
-    color: '#34C759',
   },
   patternSection: {
-    marginBottom: 30,
+    marginBottom: 40,
     alignItems: 'center',
   },
-  rackSection: {
+  optionsSection: {
     marginBottom: 30,
     alignItems: 'center',
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
-    marginBottom: 15,
+    marginBottom: 20,
     textAlign: 'center',
   },
-  targetPattern: {
+  sequenceContainer: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
     justifyContent: 'center',
+    alignItems: 'center',
+    flexWrap: 'wrap',
   },
-  playerRack: {
+  sequenceItem: {
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  optionItem: {
+    width: 70,
+    height: 70,
+    borderRadius: 12,
+  },
+  optionTouchable: {
+    margin: 8,
+  },
+  selectedOption: {
+    borderWidth: 3,
+    borderColor: '#007AFF',
+  },
+  correctOption: {
+    borderWidth: 3,
+    borderColor: '#34C759',
+    backgroundColor: '#34C75920',
+  },
+  wrongOption: {
+    borderWidth: 3,
+    borderColor: '#FF3B30',
+    backgroundColor: '#FF3B3020',
+  },
+  shapeText: {
+    fontSize: 28,
+  },
+  questionMark: {
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+    backgroundColor: '#e0e0e0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#999',
+    borderStyle: 'dashed',
+  },
+  questionMarkText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#666',
+  },
+  optionsGrid: {
     flexDirection: 'row',
-    gap: 10,
+    flexWrap: 'wrap',
     justifyContent: 'center',
-  },
-  ball: {
-    width: BALL_SIZE,
-    height: BALL_SIZE,
-    borderRadius: BALL_SIZE / 2,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-  },
-  rackPosition: {
-    width: BALL_SIZE,
-    height: BALL_SIZE,
-    borderRadius: BALL_SIZE / 2,
-    borderWidth: 1,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-  },
-  rackHint: {
-    fontSize: 12,
-    opacity: 0.7,
-    textAlign: 'center',
-    marginTop: 10,
+    gap: 4,
   },
   finalScore: {
-    fontSize: 26,
+    fontSize: 48,
     fontWeight: 'bold',
     marginBottom: 20,
     marginTop: 20,
     textAlign: 'center',
-    lineHeight: 32,
   },
   metricText: {
     fontSize: 16,

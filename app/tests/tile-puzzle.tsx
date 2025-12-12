@@ -130,30 +130,61 @@ export default function TilePuzzleTestScreen() {
   };
 
   const calculateOptimalMoves = (initialPuzzle: PuzzleState): number => {
-    // Simplified heuristic: Manhattan distance of all tiles to their goal positions
-    const solved = createSolvedPuzzle();
-    const goalPositions: { [key: number]: [number, number] } = {};
+    const stateToString = (state: PuzzleState): string => {
+      return state.flat().map(t => t === null ? '0' : t.toString()).join(',');
+    };
     
-    for (let i = 0; i < GRID_SIZE; i++) {
-      for (let j = 0; j < GRID_SIZE; j++) {
-        if (solved[i][j] !== null) {
-          goalPositions[solved[i][j] as number] = [i, j];
+    const goalState = createSolvedPuzzle();
+    const goalString = stateToString(goalState);
+    const startString = stateToString(initialPuzzle);
+    
+    if (startString === goalString) return 0;
+    
+    const visited = new Set<string>();
+    const queue: { state: PuzzleState; moves: number }[] = [{ state: initialPuzzle, moves: 0 }];
+    visited.add(startString);
+    
+    const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    
+    while (queue.length > 0) {
+      const { state, moves } = queue.shift()!;
+      
+      let emptyRow = -1, emptyCol = -1;
+      for (let i = 0; i < GRID_SIZE; i++) {
+        for (let j = 0; j < GRID_SIZE; j++) {
+          if (state[i][j] === null) {
+            emptyRow = i;
+            emptyCol = j;
+            break;
+          }
+        }
+        if (emptyRow !== -1) break;
+      }
+      
+      for (const [dr, dc] of directions) {
+        const newRow = emptyRow + dr;
+        const newCol = emptyCol + dc;
+        
+        if (newRow >= 0 && newRow < GRID_SIZE && newCol >= 0 && newCol < GRID_SIZE) {
+          const newState = state.map(row => [...row]);
+          newState[emptyRow][emptyCol] = newState[newRow][newCol];
+          newState[newRow][newCol] = null;
+          
+          const newString = stateToString(newState);
+          
+          if (newString === goalString) {
+            return moves + 1;
+          }
+          
+          if (!visited.has(newString)) {
+            visited.add(newString);
+            queue.push({ state: newState, moves: moves + 1 });
+          }
         }
       }
     }
     
-    let totalDistance = 0;
-    for (let i = 0; i < GRID_SIZE; i++) {
-      for (let j = 0; j < GRID_SIZE; j++) {
-        const tile = initialPuzzle[i][j];
-        if (tile !== null && goalPositions[tile]) {
-          const [goalRow, goalCol] = goalPositions[tile];
-          totalDistance += Math.abs(i - goalRow) + Math.abs(j - goalCol);
-        }
-      }
-    }
-    
-    return Math.max(1, Math.floor(totalDistance / 2));
+    return -1;
   };
 
   const startGame = async () => {

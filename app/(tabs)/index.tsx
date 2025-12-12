@@ -2,7 +2,8 @@ import React, { useEffect } from 'react';
 import { StyleSheet, TouchableOpacity, Alert, ScrollView, Dimensions } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { SleepTracker } from '@/components/sleep-tracker';
+// DISABLED FOR V1 - Re-enable for Mk II
+// import { SleepTracker } from '@/components/sleep-tracker';
 import { useRouter } from 'expo-router';
 import { notificationManager } from '@/services/notification-manager';
 import { isDatabaseInitialized } from '@/database/database';
@@ -34,9 +35,10 @@ export default function HomeScreen() {
     router.push('/supplements');
   };
 
-  const handleLogSymptom = () => {
-    router.push('/body-diagram');
-  };
+  // DISABLED FOR V1 - Re-enable for Mk II
+  // const handleLogSymptom = () => {
+  //   router.push('/body-diagram');
+  // };
 
   const handleCognitiveTest = () => {
     router.push('/cognitive-tests');
@@ -44,7 +46,8 @@ export default function HomeScreen() {
 
   const handleMenu = () => {
     Alert.alert('Menu', 'Select an option:', [
-      { text: 'Sleep Logs', onPress: () => router.push('/sleep-logs') },
+      // DISABLED FOR V1 - Re-enable for Mk II
+      // { text: 'Sleep Logs', onPress: () => router.push('/sleep-logs') },
       { text: 'Export Data', onPress: () => router.push('/export') },
       { text: 'Notifications', onPress: () => router.push('/notification-settings') },
       { text: 'Help', onPress: () => router.push('/help') },
@@ -59,7 +62,8 @@ export default function HomeScreen() {
   return (
     <ThemedView style={styles.container} safeArea>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <SleepTracker />
+        {/* DISABLED FOR V1 - Re-enable for Mk II */}
+      {/* <SleepTracker /> */}
       <ThemedView style={styles.titleContainer}>
         <ThemedText type="title" style={styles.title}>NeuroSync</ThemedText>
       </ThemedView>
@@ -69,9 +73,10 @@ export default function HomeScreen() {
           <ThemedText type="subtitle" style={styles.buttonText}>Log Supplement</ThemedText>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.mainButton} onPress={handleLogSymptom}>
+        {/* DISABLED FOR V1 - Re-enable for Mk II */}
+        {/* <TouchableOpacity style={styles.mainButton} onPress={handleLogSymptom}>
           <ThemedText type="subtitle" style={styles.buttonText}>Log Symptom</ThemedText>
-        </TouchableOpacity>
+        </TouchableOpacity> */}
 
         <TouchableOpacity style={styles.mainButton} onPress={handleCognitiveTest}>
           <ThemedText type="subtitle" style={styles.buttonText}>Cognitive Test</ThemedText>

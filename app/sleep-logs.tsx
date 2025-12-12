@@ -1,3 +1,5 @@
+// DISABLED FOR V1 - Re-enable for Mk II
+/*
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, TouchableOpacity, ScrollView, Alert, Modal, TextInput } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
@@ -193,7 +195,6 @@ export default function SleepLogsScreen() {
         <ThemedText style={styles.backButtonText}>Back</ThemedText>
       </TouchableOpacity>
 
-      {/* Edit Modal */}
       <Modal
         visible={editingLog !== null}
         animationType="slide"
@@ -421,3 +422,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+*/
+
+export default function SleepLogsScreen() {
+  return null;
+}

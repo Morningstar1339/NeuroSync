@@ -1,3 +1,5 @@
+// DISABLED FOR V1 - Re-enable for Mk II
+/*
 import React, { useState, useEffect, useCallback } from 'react';
 import { StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, Modal, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
@@ -141,7 +143,6 @@ useEffect(() => {
         <ThemedText style={styles.backButtonText}>Back to Body Diagram</ThemedText>
       </TouchableOpacity>
 
-      {/* Add New Symptom Modal */}
       <Modal
         visible={showAddModal}
         animationType="slide"
@@ -329,3 +330,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+*/
+
+export default function SymptomSelectionScreen() {
+  return null;
+}

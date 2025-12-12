@@ -1,3 +1,5 @@
+// DISABLED FOR V1 - Re-enable for Mk II
+/*
 import React from 'react';
 import { StyleSheet, TouchableOpacity, View, Dimensions, ScrollView } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
@@ -30,7 +32,6 @@ export default function BodyDiagramScreen() {
 
       <ThemedView style={styles.diagramContainer}>
         <View style={[styles.bodyDiagram, { width: DIAGRAM_WIDTH, height: DIAGRAM_HEIGHT }]}>
-          {/* Head */}
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.head]} 
             onPress={() => handleRegionPress('head')}
@@ -38,7 +39,6 @@ export default function BodyDiagramScreen() {
             <ThemedText style={styles.regionText}>{"Head"}</ThemedText>
           </TouchableOpacity>
 
-          {/* Thorax */}
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.thorax]} 
             onPress={() => handleRegionPress('thorax')}
@@ -46,7 +46,6 @@ export default function BodyDiagramScreen() {
             <ThemedText style={styles.regionText}>{"Thorax"}</ThemedText>
           </TouchableOpacity>
 
-          {/* Arms */}
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.leftArm]} 
             onPress={() => handleRegionPress('arms')}
@@ -60,7 +59,6 @@ export default function BodyDiagramScreen() {
             <ThemedText style={styles.regionText}>{"Arms"}</ThemedText>
           </TouchableOpacity>
 
-          {/* Hands */}
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.leftHand]} 
             onPress={() => handleRegionPress('hands')}
@@ -74,7 +72,6 @@ export default function BodyDiagramScreen() {
             <ThemedText style={styles.regionTextSmall}>{"Hands"}</ThemedText>
           </TouchableOpacity>
 
-          {/* Abdomen */}
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.abdomen]} 
             onPress={() => handleRegionPress('abdomen')}
@@ -82,7 +79,6 @@ export default function BodyDiagramScreen() {
             <ThemedText style={styles.regionText}>{"Abdomen"}</ThemedText>
           </TouchableOpacity>
 
-          {/* Pelvis */}
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.pelvis]} 
             onPress={() => handleRegionPress('pelvis')}
@@ -90,7 +86,6 @@ export default function BodyDiagramScreen() {
             <ThemedText style={styles.regionText}>{"Pelvis"}</ThemedText>
           </TouchableOpacity>
 
-          {/* Legs */}
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.leftLeg]} 
             onPress={() => handleRegionPress('legs')}
@@ -104,7 +99,6 @@ export default function BodyDiagramScreen() {
             <ThemedText style={styles.regionText}>{"Legs"}</ThemedText>
           </TouchableOpacity>
 
-          {/* Feet */}
           <TouchableOpacity 
             style={[styles.bodyRegion, styles.leftFoot]} 
             onPress={() => handleRegionPress('feet')}
@@ -306,3 +300,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 });
+*/
+
+export default function BodyDiagramScreen() {
+  return null;
+}

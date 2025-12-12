@@ -52,12 +52,49 @@ export const saveCognitiveTestResult = async (
     
     // Validate input data
     console.log(`🔄 [${operationId}] STEP 3: Validating input data...`);
+    
+    const validTestTypes = ['reflexes', 'memory', 'judgment', 'rock_dodger', 'pattern_matcher', 'tile_puzzle', 'n_back'];
+    if (!validTestTypes.includes(testType)) {
+      throw new Error(`Invalid test type: ${testType} (must be one of: ${validTestTypes.join(', ')})`);
+    }
+    
     if (typeof score !== 'number' || isNaN(score)) {
       throw new Error(`Invalid score: ${score} (must be a number)`);
     }
-    if (completionTime !== undefined && (typeof completionTime !== 'number' || isNaN(completionTime))) {
-      throw new Error(`Invalid completion time: ${completionTime} (must be a number)`);
+    if (score < 0) {
+      throw new Error(`Invalid score: ${score} (must be non-negative)`);
     }
+    
+    if (accuracy !== undefined) {
+      if (typeof accuracy !== 'number' || isNaN(accuracy)) {
+        throw new Error(`Invalid accuracy: ${accuracy} (must be a number)`);
+      }
+      if (accuracy < 0 || accuracy > 100) {
+        throw new Error(`Invalid accuracy: ${accuracy} (must be between 0 and 100)`);
+      }
+    }
+    
+    if (speed !== undefined) {
+      if (typeof speed !== 'number' || isNaN(speed)) {
+        throw new Error(`Invalid speed: ${speed} (must be a number)`);
+      }
+      if (speed < 0) {
+        throw new Error(`Invalid speed: ${speed} (must be non-negative)`);
+      }
+    }
+    
+    if (completionTime !== undefined && (typeof completionTime !== 'number' || isNaN(completionTime) || completionTime <= 0)) {
+      throw new Error(`Invalid completion time: ${completionTime} (must be a positive number)`);
+    }
+    
+    if (studyId !== undefined && (typeof studyId !== 'number' || !Number.isInteger(studyId) || studyId <= 0)) {
+      throw new Error(`Invalid study ID: ${studyId} (must be a positive integer)`);
+    }
+    
+    if (supplementLogId !== undefined && (typeof supplementLogId !== 'number' || !Number.isInteger(supplementLogId) || supplementLogId <= 0)) {
+      throw new Error(`Invalid supplement log ID: ${supplementLogId} (must be a positive integer)`);
+    }
+    
     console.log(`✅ [${operationId}] STEP 3 COMPLETE: Input data validation passed`);
     
     // Prepare data for insertion

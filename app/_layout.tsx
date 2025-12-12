@@ -270,9 +270,10 @@ export default function RootLayout() {
           <Stack.Screen name="add-supplement" options={{ headerShown: false }} />
           <Stack.Screen name="edit-supplement" options={{ headerShown: false }} />
           <Stack.Screen name="log-supplement" options={{ headerShown: false }} />
-          <Stack.Screen name="body-diagram" options={{ headerShown: false }} />
-          <Stack.Screen name="symptom-selection" options={{ headerShown: false }} />
-          <Stack.Screen name="symptom-logging" options={{ headerShown: false }} />
+          {/* DISABLED FOR V1 - Re-enable for Mk II */}
+          {/* <Stack.Screen name="body-diagram" options={{ headerShown: false }} /> */}
+          {/* <Stack.Screen name="symptom-selection" options={{ headerShown: false }} /> */}
+          {/* <Stack.Screen name="symptom-logging" options={{ headerShown: false }} /> */}
           <Stack.Screen name="cognitive-tests" options={{ headerShown: false }} />
           <Stack.Screen name="tests/reflexes" options={{ headerShown: false }} />
           <Stack.Screen name="tests/memory" options={{ headerShown: false }} />
@@ -287,7 +288,9 @@ export default function RootLayout() {
           <Stack.Screen name="tests/all-nine" options={{ headerShown: false }} />
           <Stack.Screen name="settings" options={{ headerShown: false }} />
           <Stack.Screen name="database-debug" options={{ headerShown: false }} />
-          <Stack.Screen name="sleep-logs" options={{ headerShown: false }} />
+          <Stack.Screen name="invariant-test" options={{ headerShown: false }} />
+          {/* DISABLED FOR V1 - Re-enable for Mk II */}
+          {/* <Stack.Screen name="sleep-logs" options={{ headerShown: false }} /> */}
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         </Stack>
         <StatusBar style="auto" />

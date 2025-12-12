@@ -1,3 +1,5 @@
+// DISABLED FOR V1 - Re-enable for Mk II
+/*
 import React, { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSleepDetection } from '@/hooks/use-sleep-detection';
@@ -38,5 +40,12 @@ export const SleepTracker: React.FC = () => {
 useSleepDetection(settings);
 
   // This component doesn't render anything visible
+  return null;
+};
+*/
+
+import React from 'react';
+
+export const SleepTracker: React.FC = () => {
   return null;
 };

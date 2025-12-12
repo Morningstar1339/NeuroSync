@@ -11,18 +11,11 @@
     "typecheck": "tsc --noEmit",
     "lint": "expo lint && eslint app database",
     "test": "jest",
-	"fix:entities": "node scripts/fix-unescaped-entities.js"
+    "test:fuzz": "jest --testPathPatterns=fuzz.test.ts --testTimeout=120000",
+    "fuzz": "npx ts-node --transpile-only -r tsconfig-paths/register scripts/run-fuzzer.ts",
+    "fix:entities": "node scripts/fix-unescaped-entities.js"
   },
-  "jest": {
-    "preset": "jest-expo",
-    "testMatch": [
-      "**/__tests__/**/*.(test|spec).[jt]s?(x)"
-    ],
-    "transformIgnorePatterns": [
-      "node_modules/(?!(jest-)?react-native|@react-native|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|@expo/vector-icons|react-clone-referenced-element|react-navigation|@react-navigation/.*)"
-    ]
-  },
-  "dependencies": {
+    "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/datetimepicker": "8.4.4",
@@ -59,15 +52,20 @@
     "react-native-worklets": "0.5.1"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/jest": "^30.0.0",
     "@types/react": "~19.1.0",
     "@typescript-eslint/eslint-plugin": "^8.46.4",
     "@typescript-eslint/parser": "^8.46.4",
+    "better-sqlite3": "^12.5.0",
     "eslint": "^9.39.1",
     "eslint-config-expo": "~10.0.0",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-native": "^5.0.0",
     "glob": "^12.0.0",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
     "typescript": "~5.9.2"
   },
   "private": true
