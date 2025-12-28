@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, View, KeyboardAvoidingView, Platform } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { addSupplement, checkSupplementExists } from '@/database/supplements';
+import { addSupplement, checkSupplementExists, DosageLimitParams, addExclusion } from '@/database/supplements';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { useRouter } from 'expo-router';
+import { useHierarchicalBack } from '@/hooks/use-hierarchical-back';
 
 const AVAILABLE_ICONS = [
   'medical', 'fitness', 'nutrition', 'leaf', 'water', 'rose',
@@ -44,9 +45,17 @@ export default function AddSupplementScreen() {
   const [selectedColor, setSelectedColor] = useState(DEFAULT_COLORS[0]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const [showAddDosageLimit, setShowAddDosageLimit] = useState(false);
+  const [newDosageLimitMaxStr, setNewDosageLimitMaxStr] = useState('');
+  const [newDosageLimitHoursStr, setNewDosageLimitHoursStr] = useState('24');
+  const [pendingDosageLimits, setPendingDosageLimits] = useState<DosageLimitParams[]>([]);
+
+  const scrollViewRef = useRef<ScrollView>(null);
   const router = useRouter();
   const tintColor = useThemeColor({}, 'tint');
   const textColor = useThemeColor({}, 'text');
+  
+  useHierarchicalBack('add-supplement');
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -79,7 +88,7 @@ export default function AddSupplementScreen() {
         // Continue with adding - the addSupplement function will handle duplicates
       }
 
-      await addSupplement({
+      const newSupplementId = await addSupplement({
         name: name.trim(),
         default_dosage: Number(dosage),
         dosage_unit: unit.trim(),
@@ -88,6 +97,14 @@ export default function AddSupplementScreen() {
         schedule_enabled: false,
         study_enabled: false
       });
+
+      for (const limit of pendingDosageLimits) {
+        await addExclusion({
+          supplement_id: newSupplementId,
+          exclusion_type: 'dosage_limit',
+          parameters: JSON.stringify(limit)
+        });
+      }
 
       router.back();
     } catch (error) {
@@ -113,6 +130,22 @@ export default function AddSupplementScreen() {
     router.back();
   };
 
+  const handleAddDosageLimit = () => {
+    const maxDosage = parseFloat(newDosageLimitMaxStr) || 0;
+    const hours = parseFloat(newDosageLimitHoursStr) || 1;
+    setPendingDosageLimits([...pendingDosageLimits, { max_dosage: maxDosage, time_window_hours: hours }]);
+    setShowAddDosageLimit(false);
+    setNewDosageLimitMaxStr('');
+    setNewDosageLimitHoursStr('24');
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  };
+
+  const handleRemoveDosageLimit = (index: number) => {
+    setPendingDosageLimits(pendingDosageLimits.filter((_, i) => i !== index));
+  };
+
   return (
     <ThemedView style={styles.container} safeArea>
       <KeyboardAvoidingView 
@@ -134,7 +167,7 @@ export default function AddSupplementScreen() {
         </TouchableOpacity>
       </ThemedView>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={scrollViewRef} style={styles.content} showsVerticalScrollIndicator={false}>
         <ThemedView style={styles.section}>
           <ThemedText style={styles.label}>Name</ThemedText>
           <TextInput
@@ -243,6 +276,110 @@ export default function AddSupplementScreen() {
             </View>
           </View>
         </ThemedView>
+
+        <ThemedView style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText style={styles.label}>Dose Limits</ThemedText>
+            <TouchableOpacity
+              style={[styles.addButton, { backgroundColor: tintColor }]}
+              onPress={() => {
+                setShowAddDosageLimit(true);
+                setNewDosageLimitMaxStr('');
+                setNewDosageLimitHoursStr('24');
+                setTimeout(() => {
+                  scrollViewRef.current?.scrollToEnd({ animated: true });
+                }, 100);
+              }}
+            >
+              <Ionicons name="add" size={20} color="white" />
+            </TouchableOpacity>
+          </View>
+          
+          {pendingDosageLimits.map((limit, index) => (
+            <View key={index} style={[styles.exclusionCard, { borderColor: tintColor + '20' }]}>
+              <View style={styles.exclusionContent}>
+                <Ionicons
+                  name="warning"
+                  size={20}
+                  color="#FF9500"
+                  style={styles.exclusionIcon}
+                />
+                <View style={styles.exclusionText}>
+                  <ThemedText style={styles.exclusionTitle}>Dosage Limit</ThemedText>
+                  <ThemedText style={styles.exclusionDescription}>
+                    Max {limit.max_dosage}{unit} per {limit.time_window_hours} hours
+                  </ThemedText>
+                </View>
+                <TouchableOpacity
+                  style={styles.deleteExclusionButton}
+                  onPress={() => handleRemoveDosageLimit(index)}
+                >
+                  <Ionicons name="trash-outline" size={16} color="#FF3B30" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+
+          {pendingDosageLimits.length === 0 && (
+            <ThemedText style={styles.noExclusionsText}>
+              No dose limits configured. Tap + to add limits.
+            </ThemedText>
+          )}
+        </ThemedView>
+
+        {showAddDosageLimit && (
+          <ThemedView style={styles.addExclusionSection}>
+            <ThemedText style={styles.label}>Add Dose Limit</ThemedText>
+            
+            <View style={styles.dosageLimitInputs}>
+              <View style={styles.dosageInputGroup}>
+                <ThemedText style={styles.dosageLimitLabel}>Max Dosage:</ThemedText>
+                <TextInput
+                  style={[styles.dosageInput, { borderColor: tintColor + '30', color: textColor }]}
+                  value={newDosageLimitMaxStr}
+                  onChangeText={setNewDosageLimitMaxStr}
+                  placeholder="Amount"
+                  placeholderTextColor="#8E8E93"
+                  keyboardType="decimal-pad"
+                />
+                <ThemedText style={styles.unitText}>{unit}</ThemedText>
+              </View>
+              <View style={styles.hoursInputGroup}>
+                <ThemedText style={styles.hoursLabel}>Per:</ThemedText>
+                <TextInput
+                  style={[styles.hoursInput, { borderColor: tintColor + '30', color: textColor }]}
+                  value={newDosageLimitHoursStr}
+                  onChangeText={setNewDosageLimitHoursStr}
+                  placeholder="Hours"
+                  placeholderTextColor="#8E8E93"
+                  keyboardType="decimal-pad"
+                />
+                <ThemedText style={styles.unitText}>hours</ThemedText>
+              </View>
+            </View>
+
+            <View style={styles.exclusionButtons}>
+              <TouchableOpacity
+                style={styles.cancelExclusionButton}
+                onPress={() => setShowAddDosageLimit(false)}
+              >
+                <ThemedText style={styles.cancelExclusionText}>Cancel</ThemedText>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[
+                  styles.addExclusionButton,
+                  { backgroundColor: tintColor },
+                  (!newDosageLimitMaxStr || !parseFloat(newDosageLimitMaxStr) || !newDosageLimitHoursStr || !parseFloat(newDosageLimitHoursStr)) && { opacity: 0.5 }
+                ]}
+                onPress={handleAddDosageLimit}
+                disabled={!newDosageLimitMaxStr || !parseFloat(newDosageLimitMaxStr) || !newDosageLimitHoursStr || !parseFloat(newDosageLimitHoursStr)}
+              >
+                <ThemedText style={styles.addExclusionText}>Add Limit</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </ThemedView>
+        )}
       </ScrollView>
       </KeyboardAvoidingView>
     </ThemedView>
@@ -252,14 +389,15 @@ export default function AddSupplementScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 60,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingTop: 24,
+    paddingBottom: 12,
+    marginBottom: 20,
   },
   cancelButton: {
     paddingVertical: 8,
@@ -391,5 +529,237 @@ const styles = StyleSheet.create({
   previewDosage: {
     fontSize: 14,
     color: '#8E8E93',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  addButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  exclusionCard: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+  },
+  exclusionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  exclusionIcon: {
+    marginRight: 12,
+  },
+  exclusionText: {
+    flex: 1,
+  },
+  exclusionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  exclusionDescription: {
+    fontSize: 12,
+    opacity: 0.7,
+  },
+  deleteExclusionButton: {
+    padding: 4,
+  },
+  noExclusionsText: {
+    fontSize: 14,
+    opacity: 0.6,
+    textAlign: 'center',
+    fontStyle: 'italic',
+    marginVertical: 20,
+  },
+  addExclusionSection: {
+    marginBottom: 24,
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(128, 128, 128, 0.1)',
+  },
+  exclusionTypeSelector: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  typeButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5E7',
+    alignItems: 'center',
+  },
+  typeButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  timeWindowInputs: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  timeInputGroup: {
+    flex: 1,
+  },
+  timeLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  timeInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  dosageLimitInputs: {
+    marginBottom: 16,
+  },
+  dosageInputGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
+  },
+  dosageLimitLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    minWidth: 80,
+  },
+  hoursInputGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  hoursLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    minWidth: 80,
+  },
+  hoursInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    fontSize: 16,
+  },
+  scheduleModeLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  scheduleModeSelector: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  scheduleModeButton: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5E7',
+    alignItems: 'center',
+  },
+  scheduleModeButtonText: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  intervalInputGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  intervalLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  intervalInput: {
+    width: 60,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  timeWindowSection: {
+    marginBottom: 16,
+  },
+  daysHint: {
+    fontSize: 12,
+    opacity: 0.6,
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  daysSelectorContainer: {
+    marginTop: 4,
+  },
+  daysSelector: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  dayButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E5E5E7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  unitText: {
+    fontSize: 14,
+    opacity: 0.7,
+    minWidth: 60,
+  },
+  exclusionButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  cancelExclusionButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5E7',
+    alignItems: 'center',
+  },
+  cancelExclusionText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+  addExclusionButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  addExclusionText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: 'white',
   },
 });

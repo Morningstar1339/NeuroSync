@@ -2,7 +2,7 @@ import { withDatabase, getFallbackData, addFallbackData, getDatabase, checkDatab
 
 export interface CognitiveTestResult {
   id: number;
-  test_type: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back';
+  test_type: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back' | 'stroop' | 'questionnaire';
   timestamp: number;
   score: number;
   accuracy: number;
@@ -14,7 +14,7 @@ export interface CognitiveTestResult {
 }
 
 export const saveCognitiveTestResult = async (
-  testType: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back',
+  testType: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back' | 'stroop' | 'questionnaire',
   score: number,
   rawData?: any,
   completionTime?: number,
@@ -53,7 +53,7 @@ export const saveCognitiveTestResult = async (
     // Validate input data
     console.log(`🔄 [${operationId}] STEP 3: Validating input data...`);
     
-    const validTestTypes = ['reflexes', 'memory', 'judgment', 'rock_dodger', 'pattern_matcher', 'tile_puzzle', 'n_back'];
+    const validTestTypes = ['reflexes', 'memory', 'judgment', 'rock_dodger', 'pattern_matcher', 'tile_puzzle', 'n_back', 'stroop', 'questionnaire'];
     if (!validTestTypes.includes(testType)) {
       throw new Error(`Invalid test type: ${testType} (must be one of: ${validTestTypes.join(', ')})`);
     }
@@ -170,7 +170,7 @@ export const saveCognitiveTestResult = async (
 };
 
 export const getCognitiveTestResults = async (
-  testType?: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back',
+  testType?: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back' | 'stroop' | 'questionnaire',
   limit?: number
 ): Promise<CognitiveTestResult[]> => {
   return await withDatabase(
@@ -216,7 +216,7 @@ export const getCognitiveTestResults = async (
 };
 
 export const getTestResultsOlderThan24Hours = async (
-  testType?: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back'
+  testType?: 'reflexes' | 'memory' | 'judgment' | 'rock_dodger' | 'pattern_matcher' | 'tile_puzzle' | 'n_back' | 'questionnaire'
 ): Promise<CognitiveTestResult[]> => {
   const twentyFourHoursAgo = Math.floor(Date.now() / 1000) - (24 * 60 * 60);
   

@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, View, KeyboardAvoidingView, Platform } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Supplement, Exclusion, TimeWindowParams, DosageLimitParams, StudyProtocol, getSupplementExclusions, addExclusion, deleteExclusion, getSupplementStudyProtocols, addStudyProtocol, deleteStudyProtocol } from '@/database/supplements';
+import { Supplement, Exclusion, DosageLimitParams, getSupplementExclusions, addExclusion, deleteExclusion } from '@/database/supplements';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { openDatabase } from '@/database/database';
+import { useHierarchicalBack } from '@/hooks/use-hierarchical-back';
 
 const AVAILABLE_ICONS = [
   'medical', 'fitness', 'nutrition', 'leaf', 'water', 'rose',
@@ -42,6 +43,8 @@ export default function EditSupplementScreen() {
   const router = useRouter();
   const tintColor = useThemeColor({}, 'tint');
   const textColor = useThemeColor({}, 'text');
+  
+  useHierarchicalBack('edit-supplement');
 
   const supplementId = Number(params.id);
 
@@ -64,18 +67,11 @@ export default function EditSupplementScreen() {
   
   // Exclusion states
   const [exclusions, setExclusions] = useState<Exclusion[]>([]);
-  const [showAddExclusion, setShowAddExclusion] = useState(false);
-  const [newExclusionType, setNewExclusionType] = useState<'time_window' | 'dosage_limit'>('time_window');
-  const [newTimeWindow, setNewTimeWindow] = useState<TimeWindowParams>({ start_time: '22:00', end_time: '06:00' });
-  const [newDosageLimit, setNewDosageLimit] = useState<DosageLimitParams>({ max_dosage: 1000, time_window_hours: 24 });
-  
-  // Study protocol states
-  const [studyProtocols, setStudyProtocols] = useState<StudyProtocol[]>([]);
-  const [showAddStudy, setShowAddStudy] = useState(false);
-  const [newStudyType, setNewStudyType] = useState<'event_based' | 'daily_schedule'>('event_based');
-  const [newTestType, setNewTestType] = useState<'reflexes' | 'memory' | 'judgment'>('reflexes');
-  const [newIntervalMinutes, setNewIntervalMinutes] = useState(60);
-  const [newDurationMinutes, setNewDurationMinutes] = useState(180);
+  const [showAddDosageLimit, setShowAddDosageLimit] = useState(false);
+  const [newDosageLimitMaxStr, setNewDosageLimitMaxStr] = useState('');
+  const [newDosageLimitHoursStr, setNewDosageLimitHoursStr] = useState('24');
+
+  const scrollViewRef = useRef<ScrollView>(null);
 
   const loadExclusions = useCallback(async () => {
     try {
@@ -86,47 +82,37 @@ export default function EditSupplementScreen() {
     }
   }, [supplementId]);
 
-  const loadStudyProtocols = useCallback(async () => {
-    try {
-      const protocols = await getSupplementStudyProtocols(supplementId);
-      setStudyProtocols(protocols);
-    } catch (error) {
-      console.error('Failed to load study protocols:', error);
-    }
-  }, [supplementId]);
-
   useEffect(() => {
     loadExclusions();
-    loadStudyProtocols();
-  }, [loadExclusions, loadStudyProtocols]);
+  }, [loadExclusions]);
 
-  const handleAddExclusion = async () => {
+  const handleAddDosageLimit = async () => {
     try {
-      let parameters: string;
-      if (newExclusionType === 'time_window') {
-        parameters = JSON.stringify(newTimeWindow);
-      } else {
-        parameters = JSON.stringify(newDosageLimit);
-      }
-
+      const maxDosage = parseFloat(newDosageLimitMaxStr) || 0;
+      const hours = parseFloat(newDosageLimitHoursStr) || 1;
       await addExclusion({
         supplement_id: originalSupplement.id,
-        exclusion_type: newExclusionType,
-        parameters
+        exclusion_type: 'dosage_limit',
+        parameters: JSON.stringify({ max_dosage: maxDosage, time_window_hours: hours })
       });
 
-      setShowAddExclusion(false);
+      setShowAddDosageLimit(false);
+      setNewDosageLimitMaxStr('');
+      setNewDosageLimitHoursStr('24');
       loadExclusions();
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     } catch (error) {
-      console.error('Failed to add exclusion:', error);
-      Alert.alert('Error', 'Failed to add exclusion. Please try again.');
+      console.error('Failed to add warning:', error);
+      Alert.alert('Error', 'Failed to add warning. Please try again.');
     }
   };
 
   const handleDeleteExclusion = async (exclusionId: number) => {
     Alert.alert(
-      'Delete Exclusion',
-      'Are you sure you want to delete this exclusion?',
+      'Delete Warning',
+      'Are you sure you want to delete this warning?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -137,8 +123,8 @@ export default function EditSupplementScreen() {
               await deleteExclusion(exclusionId);
               loadExclusions();
             } catch (error) {
-              console.error('Failed to delete exclusion:', error);
-              Alert.alert('Error', 'Failed to delete exclusion. Please try again.');
+              console.error('Failed to delete warning:', error);
+              Alert.alert('Error', 'Failed to delete warning. Please try again.');
             }
           }
         }
@@ -146,80 +132,6 @@ export default function EditSupplementScreen() {
     );
   };
 
-  const handleAddStudyProtocol = async () => {
-    try {
-      // Validate minimum interval (test duration + 30 seconds)
-      const minInterval = getTestDuration(newTestType) + 0.5; // 30 seconds in minutes
-      if (newIntervalMinutes < minInterval) {
-        Alert.alert('Invalid Interval', `Minimum interval is ${minInterval} minutes (test duration + 30 seconds)`);
-        return;
-      }
-
-      await addStudyProtocol({
-        supplement_id: originalSupplement.id,
-        test_type: newTestType,
-        interval_minutes: newIntervalMinutes,
-        duration_minutes: newDurationMinutes,
-        schedule_type: newStudyType,
-        parameters: undefined
-      });
-
-      setShowAddStudy(false);
-      loadStudyProtocols();
-    } catch (error) {
-      console.error('Failed to add study protocol:', error);
-      Alert.alert('Error', 'Failed to add study protocol. Please try again.');
-    }
-  };
-
-  const handleDeleteStudyProtocol = async (protocolId: number) => {
-    Alert.alert(
-      'Delete Study Protocol',
-      'Are you sure you want to delete this study protocol?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteStudyProtocol(protocolId);
-              loadStudyProtocols();
-            } catch (error) {
-              console.error('Failed to delete study protocol:', error);
-              Alert.alert('Error', 'Failed to delete study protocol. Please try again.');
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  const getTestDuration = (testType: 'reflexes' | 'memory' | 'judgment'): number => {
-    switch (testType) {
-      case 'reflexes':
-        return 10 / 60; // 10 seconds in minutes
-      case 'memory':
-        return 1; // 60 seconds in minutes
-      case 'judgment':
-        return 0.5; // 30 seconds in minutes
-      default:
-        return 1;
-    }
-  };
-
-  const getTestDisplayName = (testType: 'reflexes' | 'memory' | 'judgment'): string => {
-    switch (testType) {
-      case 'reflexes':
-        return 'Reflexes (10s)';
-      case 'memory':
-        return 'Memory (60s)';
-      case 'judgment':
-        return 'Judgment (30s)';
-      default:
-        return testType;
-    }
-  };
 
   const updateSupplement = async (updates: Partial<Supplement>) => {
     const db = await openDatabase();
@@ -317,7 +229,7 @@ export default function EditSupplementScreen() {
           </TouchableOpacity>
         </ThemedView>
 
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView ref={scrollViewRef} style={styles.content} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.section}>
             <ThemedText style={styles.label}>Name</ThemedText>
             <View style={[styles.disabledInput, { borderColor: '#E5E5E7' }]}>
@@ -419,35 +331,37 @@ export default function EditSupplementScreen() {
 
           <ThemedView style={styles.section}>
             <View style={styles.sectionHeader}>
-              <ThemedText style={styles.label}>Exclusions & Warnings</ThemedText>
+              <ThemedText style={styles.label}>Warnings</ThemedText>
               <TouchableOpacity
                 style={[styles.addButton, { backgroundColor: tintColor }]}
-                onPress={() => setShowAddExclusion(true)}
+                onPress={() => {
+                  setShowAddDosageLimit(true);
+                  setNewDosageLimitMaxStr('');
+                  setNewDosageLimitHoursStr('24');
+                  setTimeout(() => {
+                    scrollViewRef.current?.scrollToEnd({ animated: true });
+                  }, 100);
+                }}
               >
                 <Ionicons name="add" size={20} color="white" />
               </TouchableOpacity>
             </View>
             
-            {exclusions.map((exclusion) => {
+            {exclusions.filter(e => e.exclusion_type === 'dosage_limit').map((exclusion) => {
               const params = JSON.parse(exclusion.parameters);
               return (
                 <View key={exclusion.id} style={[styles.exclusionCard, { borderColor: tintColor + '20' }]}>
                   <View style={styles.exclusionContent}>
                     <Ionicons
-                      name={exclusion.exclusion_type === 'time_window' ? 'time-outline' : 'warning'}
+                      name="warning"
                       size={20}
-                      color={exclusion.exclusion_type === 'time_window' ? '#FF3B30' : '#FF9500'}
+                      color="#FF9500"
                       style={styles.exclusionIcon}
                     />
                     <View style={styles.exclusionText}>
-                      <ThemedText style={styles.exclusionTitle}>
-                        {exclusion.exclusion_type === 'time_window' ? 'Time Window' : 'Dosage Limit'}
-                      </ThemedText>
+                      <ThemedText style={styles.exclusionTitle}>Dosage Limit</ThemedText>
                       <ThemedText style={styles.exclusionDescription}>
-                        {exclusion.exclusion_type === 'time_window'
-                          ? `Do not take between ${params.start_time} and ${params.end_time}`
-                          : `Max ${params.max_dosage}${originalSupplement.dosage_unit} per ${params.time_window_hours} hours`
-                        }
+                        Max {params.max_dosage}{originalSupplement.dosage_unit} per {params.time_window_hours} hours
                       </ThemedText>
                     </View>
                     <TouchableOpacity
@@ -461,266 +375,62 @@ export default function EditSupplementScreen() {
               );
             })}
 
-            {exclusions.length === 0 && (
+            {exclusions.filter(e => e.exclusion_type === 'dosage_limit').length === 0 && (
               <ThemedText style={styles.noExclusionsText}>
-                No exclusions configured. Tap + to add warnings.
+                No warnings configured. Tap + to add warnings.
               </ThemedText>
             )}
           </ThemedView>
 
-          {showAddExclusion && (
+          {showAddDosageLimit && (
             <ThemedView style={styles.addExclusionSection}>
-              <ThemedText style={styles.label}>Add Exclusion</ThemedText>
+              <ThemedText style={styles.label}>Add Warning</ThemedText>
               
-              <View style={styles.exclusionTypeSelector}>
-                <TouchableOpacity
-                  style={[
-                    styles.typeButton,
-                    newExclusionType === 'time_window' && { backgroundColor: tintColor + '20', borderColor: tintColor }
-                  ]}
-                  onPress={() => setNewExclusionType('time_window')}
-                >
-                  <ThemedText style={[
-                    styles.typeButtonText,
-                    newExclusionType === 'time_window' && { color: tintColor }
-                  ]}>Time Window</ThemedText>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={[
-                    styles.typeButton,
-                    newExclusionType === 'dosage_limit' && { backgroundColor: tintColor + '20', borderColor: tintColor }
-                  ]}
-                  onPress={() => setNewExclusionType('dosage_limit')}
-                >
-                  <ThemedText style={[
-                    styles.typeButtonText,
-                    newExclusionType === 'dosage_limit' && { color: tintColor }
-                  ]}>Dosage Limit</ThemedText>
-                </TouchableOpacity>
-              </View>
-
-              {newExclusionType === 'time_window' ? (
-                <View style={styles.timeWindowInputs}>
-                  <View style={styles.timeInputGroup}>
-                    <ThemedText style={styles.timeLabel}>From:</ThemedText>
-                    <TextInput
-                      style={[styles.timeInput, { borderColor: tintColor + '30', color: textColor }]}
-                      value={newTimeWindow.start_time}
-                      onChangeText={(text) => setNewTimeWindow({ ...newTimeWindow, start_time: text })}
-                      placeholder="HH:MM"
-                      placeholderTextColor="#8E8E93"
-                    />
-                  </View>
-                  <View style={styles.timeInputGroup}>
-                    <ThemedText style={styles.timeLabel}>To:</ThemedText>
-                    <TextInput
-                      style={[styles.timeInput, { borderColor: tintColor + '30', color: textColor }]}
-                      value={newTimeWindow.end_time}
-                      onChangeText={(text) => setNewTimeWindow({ ...newTimeWindow, end_time: text })}
-                      placeholder="HH:MM"
-                      placeholderTextColor="#8E8E93"
-                    />
-                  </View>
-                </View>
-              ) : (
-                <View style={styles.dosageLimitInputs}>
-                  <View style={styles.dosageInputGroup}>
-                    <ThemedText style={styles.dosageLabel}>Max Dosage:</ThemedText>
-                    <TextInput
-                      style={[styles.dosageInput, { borderColor: tintColor + '30', color: textColor }]}
-                      value={newDosageLimit.max_dosage.toString()}
-                      onChangeText={(text) => setNewDosageLimit({ ...newDosageLimit, max_dosage: Number(text) || 0 })}
-                      placeholder="Amount"
-                      placeholderTextColor="#8E8E93"
-                      keyboardType="numeric"
-                    />
-                    <ThemedText style={styles.unitText}>{originalSupplement.dosage_unit}</ThemedText>
-                  </View>
-                  <View style={styles.hoursInputGroup}>
-                    <ThemedText style={styles.hoursLabel}>Per:</ThemedText>
-                    <TextInput
-                      style={[styles.hoursInput, { borderColor: tintColor + '30', color: textColor }]}
-                      value={newDosageLimit.time_window_hours.toString()}
-                      onChangeText={(text) => setNewDosageLimit({ ...newDosageLimit, time_window_hours: Number(text) || 1 })}
-                      placeholder="Hours"
-                      placeholderTextColor="#8E8E93"
-                      keyboardType="numeric"
-                    />
-                    <ThemedText style={styles.unitText}>hours</ThemedText>
-                  </View>
-                </View>
-              )}
-
-              <View style={styles.exclusionButtons}>
-                <TouchableOpacity
-                  style={styles.cancelExclusionButton}
-                  onPress={() => setShowAddExclusion(false)}
-                >
-                  <ThemedText style={styles.cancelExclusionText}>Cancel</ThemedText>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={[styles.addExclusionButton, { backgroundColor: tintColor }]}
-                  onPress={handleAddExclusion}
-                >
-                  <ThemedText style={styles.addExclusionText}>Add Exclusion</ThemedText>
-                </TouchableOpacity>
-              </View>
-            </ThemedView>
-          )}
-
-          <ThemedView style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.label}>Cognitive Study Protocols</ThemedText>
-              <TouchableOpacity
-                style={[styles.addButton, { backgroundColor: tintColor }]}
-                onPress={() => setShowAddStudy(true)}
-              >
-                <Ionicons name="add" size={20} color="white" />
-              </TouchableOpacity>
-            </View>
-            
-            {studyProtocols.map((protocol) => (
-              <View key={protocol.id} style={[styles.exclusionCard, { borderColor: tintColor + '20' }]}>
-                <View style={styles.exclusionContent}>
-                  <Ionicons
-                    name="flask-outline"
-                    size={20}
-                    color={tintColor}
-                    style={styles.exclusionIcon}
+              <View style={styles.dosageLimitInputs}>
+                <View style={styles.dosageInputGroup}>
+                  <ThemedText style={styles.dosageLabel}>Max Dosage:</ThemedText>
+                  <TextInput
+                    style={[styles.dosageInput, { borderColor: tintColor + '30', color: textColor }]}
+                    value={newDosageLimitMaxStr}
+                    onChangeText={setNewDosageLimitMaxStr}
+                    placeholder="Amount"
+                    placeholderTextColor="#8E8E93"
+                    keyboardType="decimal-pad"
                   />
-                  <View style={styles.exclusionText}>
-                    <ThemedText style={styles.exclusionTitle}>
-                      {getTestDisplayName(protocol.test_type)} - {protocol.schedule_type === 'event_based' ? 'Event-Based' : 'Daily Schedule'}
-                    </ThemedText>
-                    <ThemedText style={styles.exclusionDescription}>
-                      {protocol.schedule_type === 'event_based'
-                        ? `Every ${protocol.interval_minutes}min for ${Math.floor(protocol.duration_minutes / 60)}h${protocol.duration_minutes % 60 ? ` ${protocol.duration_minutes % 60}m` : ''} after taking`
-                        : 'Test at scheduled times daily'
-                      }
-                    </ThemedText>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.deleteExclusionButton}
-                    onPress={() => handleDeleteStudyProtocol(protocol.id)}
-                  >
-                    <Ionicons name="trash-outline" size={16} color="#FF3B30" />
-                  </TouchableOpacity>
+                  <ThemedText style={styles.unitText}>{originalSupplement.dosage_unit}</ThemedText>
                 </View>
-              </View>
-            ))}
-
-            {studyProtocols.length === 0 && (
-              <ThemedText style={styles.noExclusionsText}>
-                No study protocols configured. Tap + to add cognitive tests.
-              </ThemedText>
-            )}
-          </ThemedView>
-
-          {showAddStudy && (
-            <ThemedView style={styles.addExclusionSection}>
-              <ThemedText style={styles.label}>Add Study Protocol</ThemedText>
-              
-              <View style={styles.exclusionTypeSelector}>
-                <TouchableOpacity
-                  style={[
-                    styles.typeButton,
-                    newStudyType === 'event_based' && { backgroundColor: tintColor + '20', borderColor: tintColor }
-                  ]}
-                  onPress={() => setNewStudyType('event_based')}
-                >
-                  <ThemedText style={[
-                    styles.typeButtonText,
-                    newStudyType === 'event_based' && { color: tintColor }
-                  ]}>Event-Based</ThemedText>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={[
-                    styles.typeButton,
-                    newStudyType === 'daily_schedule' && { backgroundColor: tintColor + '20', borderColor: tintColor }
-                  ]}
-                  onPress={() => setNewStudyType('daily_schedule')}
-                >
-                  <ThemedText style={[
-                    styles.typeButtonText,
-                    newStudyType === 'daily_schedule' && { color: tintColor }
-                  ]}>Daily Schedule</ThemedText>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.studyInputs}>
-                <View style={styles.testTypeSelector}>
-                  <ThemedText style={styles.inputLabel}>Test Type:</ThemedText>
-                  <View style={styles.testTypeButtons}>
-                    {(['reflexes', 'memory', 'judgment'] as const).map((testType) => (
-                      <TouchableOpacity
-                        key={testType}
-                        style={[
-                          styles.testTypeButton,
-                          newTestType === testType && { backgroundColor: tintColor + '20', borderColor: tintColor }
-                        ]}
-                        onPress={() => setNewTestType(testType)}
-                      >
-                        <ThemedText style={[
-                          styles.testTypeButtonText,
-                          newTestType === testType && { color: tintColor }
-                        ]}>{getTestDisplayName(testType)}</ThemedText>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
+                <View style={styles.hoursInputGroup}>
+                  <ThemedText style={styles.hoursLabel}>Per:</ThemedText>
+                  <TextInput
+                    style={[styles.hoursInput, { borderColor: tintColor + '30', color: textColor }]}
+                    value={newDosageLimitHoursStr}
+                    onChangeText={setNewDosageLimitHoursStr}
+                    placeholder="Hours"
+                    placeholderTextColor="#8E8E93"
+                    keyboardType="decimal-pad"
+                  />
+                  <ThemedText style={styles.unitText}>hours</ThemedText>
                 </View>
-
-                {newStudyType === 'event_based' && (
-                  <>
-                    <View style={styles.inputRow}>
-                      <ThemedText style={styles.inputLabel}>Interval (minutes):</ThemedText>
-                      <TextInput
-                        style={[styles.numberInput, { borderColor: tintColor + '30', color: textColor }]}
-                        value={newIntervalMinutes.toString()}
-                        onChangeText={(text) => setNewIntervalMinutes(Number(text) || 1)}
-                        placeholder="60"
-                        placeholderTextColor="#8E8E93"
-                        keyboardType="numeric"
-                      />
-                    </View>
-                    
-                    <View style={styles.inputRow}>
-                      <ThemedText style={styles.inputLabel}>Duration (minutes):</ThemedText>
-                      <TextInput
-                        style={[styles.numberInput, { borderColor: tintColor + '30', color: textColor }]}
-                        value={newDurationMinutes.toString()}
-                        onChangeText={(text) => setNewDurationMinutes(Number(text) || 60)}
-                        placeholder="180"
-                        placeholderTextColor="#8E8E93"
-                        keyboardType="numeric"
-                      />
-                    </View>
-                  </>
-                )}
-
-                <ThemedText style={styles.helperText}>
-                  {newStudyType === 'event_based' 
-                    ? `Tests will run every ${newIntervalMinutes} minutes for ${Math.floor(newDurationMinutes / 60)}h${newDurationMinutes % 60 ? ` ${newDurationMinutes % 60}m` : ''} after taking this supplement.`
-                    : 'Tests will run at pre-configured daily times, not linked to supplement consumption.'
-                  }
-                </ThemedText>
               </View>
 
               <View style={styles.exclusionButtons}>
                 <TouchableOpacity
                   style={styles.cancelExclusionButton}
-                  onPress={() => setShowAddStudy(false)}
+                  onPress={() => setShowAddDosageLimit(false)}
                 >
                   <ThemedText style={styles.cancelExclusionText}>Cancel</ThemedText>
                 </TouchableOpacity>
                 
                 <TouchableOpacity
-                  style={[styles.addExclusionButton, { backgroundColor: tintColor }]}
-                  onPress={handleAddStudyProtocol}
+                  style={[
+                    styles.addExclusionButton,
+                    { backgroundColor: tintColor },
+                    (!newDosageLimitMaxStr || !parseFloat(newDosageLimitMaxStr) || !newDosageLimitHoursStr || !parseFloat(newDosageLimitHoursStr)) && { opacity: 0.5 }
+                  ]}
+                  onPress={handleAddDosageLimit}
+                  disabled={!newDosageLimitMaxStr || !parseFloat(newDosageLimitMaxStr) || !newDosageLimitHoursStr || !parseFloat(newDosageLimitHoursStr)}
                 >
-                  <ThemedText style={styles.addExclusionText}>Add Protocol</ThemedText>
+                  <ThemedText style={styles.addExclusionText}>Add Warning</ThemedText>
                 </TouchableOpacity>
               </View>
             </ThemedView>
@@ -745,14 +455,15 @@ export default function EditSupplementScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 60,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingTop: 24,
+    paddingBottom: 12,
+    marginBottom: 20,
   },
   cancelButton: {
     paddingVertical: 8,
@@ -1037,6 +748,78 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     fontSize: 16,
   },
+  scheduleModeLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  scheduleModeSelector: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  scheduleModeButton: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5E7',
+    alignItems: 'center',
+  },
+  scheduleModeButtonText: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  intervalInputGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  intervalLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  intervalInput: {
+    width: 60,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  timeWindowSection: {
+    marginBottom: 16,
+  },
+  daysHint: {
+    fontSize: 12,
+    opacity: 0.6,
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  daysSelectorContainer: {
+    marginTop: 4,
+  },
+  daysSelector: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  dayButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E5E5E7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
   unitText: {
     fontSize: 14,
     opacity: 0.7,
@@ -1071,48 +854,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: 'white',
-  },
-  studyInputs: {
-    marginBottom: 16,
-  },
-  testTypeSelector: {
-    marginBottom: 16,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  testTypeButtons: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  testTypeButton: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#E5E5E7',
-    alignItems: 'center',
-  },
-  testTypeButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 8,
-  },
-  numberInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    textAlign: 'center',
   },
 });

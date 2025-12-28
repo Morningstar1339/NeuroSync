@@ -103,6 +103,32 @@ const openSQLiteDatabaseInternal = async (): Promise<SQLite.SQLiteDatabase> => {
       logError('openSQLiteDatabaseInternal', pragmaError);
     }
 
+    // Run critical migrations FIRST before any table creation or queries
+    try {
+      await db.execAsync(`ALTER TABLE schedules ADD COLUMN activity_id INTEGER`);
+      logInfo('openSQLiteDatabaseInternal', 'Added activity_id column to schedules');
+    } catch (e) {
+      // Column already exists or table doesn't exist yet - both OK
+    }
+    
+    try {
+      await db.execAsync(`ALTER TABLE notification_settings ADD COLUMN bedtime_reminder_enabled INTEGER DEFAULT 0`);
+      logInfo('openSQLiteDatabaseInternal', 'Added bedtime_reminder_enabled column');
+    } catch (e) {
+      // Column already exists or table doesn't exist yet - both OK
+    }
+    
+    try {
+      await db.execAsync(`ALTER TABLE notification_settings ADD COLUMN bedtime_reminder_time TEXT DEFAULT '22:00'`);
+      logInfo('openSQLiteDatabaseInternal', 'Added bedtime_reminder_time column');
+    } catch (e) {
+      // Column already exists or table doesn't exist yet - both OK
+    }
+
+    // Create all tables
+    logInfo('openSQLiteDatabaseInternal', 'Creating database tables...');
+    await createTables(db);
+
     sqliteDb = db;
     isDatabaseReady = true;
     fallbackMode = false;
@@ -117,6 +143,260 @@ const openSQLiteDatabaseInternal = async (): Promise<SQLite.SQLiteDatabase> => {
     isDatabaseReady = false;
     fallbackMode = true;
     throw error;
+  }
+};
+
+const createTables = async (db: SQLite.SQLiteDatabase): Promise<void> => {
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS supplements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      default_dosage REAL NOT NULL,
+      dosage_unit TEXT NOT NULL,
+      icon_id TEXT,
+      color TEXT DEFAULT '#007AFF',
+      schedule_enabled INTEGER DEFAULT 0,
+      study_enabled INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS supplement_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplement_id INTEGER NOT NULL,
+      timestamp INTEGER NOT NULL,
+      dosage REAL NOT NULL,
+      notes TEXT,
+      FOREIGN KEY (supplement_id) REFERENCES supplements (id)
+    );
+
+    CREATE TABLE IF NOT EXISTS symptoms (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      body_region TEXT NOT NULL,
+      description TEXT NOT NULL,
+      last_used INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS symptom_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      symptom_id INTEGER NOT NULL,
+      timestamp INTEGER NOT NULL,
+      severity INTEGER NOT NULL,
+      notes TEXT,
+      FOREIGN KEY (symptom_id) REFERENCES symptoms (id)
+    );
+
+    CREATE TABLE IF NOT EXISTS cognitive_test_results (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      test_type TEXT NOT NULL,
+      timestamp INTEGER NOT NULL,
+      score REAL NOT NULL,
+      accuracy REAL DEFAULT 0,
+      speed REAL DEFAULT 0,
+      raw_data TEXT,
+      completion_time REAL,
+      study_id INTEGER,
+      supplement_log_id INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS sleep_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sleep_start INTEGER,
+      sleep_end INTEGER,
+      duration_seconds INTEGER,
+      manually_edited INTEGER DEFAULT 0,
+      didnt_sleep INTEGER DEFAULT 0,
+      logged_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS exclusions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplement_id INTEGER NOT NULL,
+      exclusion_type TEXT NOT NULL,
+      parameters TEXT NOT NULL,
+      FOREIGN KEY (supplement_id) REFERENCES supplements (id)
+    );
+
+    CREATE TABLE IF NOT EXISTS study_protocols (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplement_id INTEGER,
+      test_type TEXT NOT NULL,
+      interval_minutes INTEGER NOT NULL,
+      duration_minutes INTEGER NOT NULL,
+      schedule_type TEXT NOT NULL,
+      parameters TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS scheduled_tests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      study_protocol_id INTEGER NOT NULL,
+      supplement_log_id INTEGER,
+      test_type TEXT NOT NULL,
+      scheduled_time INTEGER NOT NULL,
+      completed INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      notification_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      related_id INTEGER NOT NULL,
+      scheduled_time INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      data TEXT,
+      created_at INTEGER NOT NULL,
+      cancelled INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      notifications_enabled INTEGER DEFAULT 1,
+      supplement_reminders_enabled INTEGER DEFAULT 1,
+      study_notifications_enabled INTEGER DEFAULT 1,
+      sleep_reminders_enabled INTEGER DEFAULT 1,
+      sleep_reminder_type TEXT DEFAULT 'duration_based',
+      sleep_reminder_time TEXT,
+      sleep_reminder_hours INTEGER DEFAULT 16
+    );
+
+    CREATE TABLE IF NOT EXISTS schedules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_type TEXT NOT NULL CHECK (schedule_type IN ('supplement', 'cognitive_test', 'activity', 'sleep', 'daily_review', 'questionnaire')),
+      supplement_id INTEGER,
+      activity_id INTEGER,
+      test_type TEXT,
+      time TEXT NOT NULL,
+      days TEXT NOT NULL,
+      enabled INTEGER DEFAULT 1,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      FOREIGN KEY (supplement_id) REFERENCES supplements(id) ON DELETE CASCADE,
+      FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_schedules_supplement_id ON schedules (supplement_id);
+    CREATE INDEX IF NOT EXISTS idx_schedules_activity_id ON schedules (activity_id);
+    CREATE INDEX IF NOT EXISTS idx_schedules_type ON schedules (schedule_type);
+    CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules (enabled);
+
+    CREATE TABLE IF NOT EXISTS activities (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      default_value REAL NOT NULL,
+      unit TEXT NOT NULL,
+      icon_id TEXT,
+      color TEXT DEFAULT '#007AFF'
+    );
+
+    CREATE TABLE IF NOT EXISTS activity_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      activity_id INTEGER NOT NULL,
+      timestamp INTEGER NOT NULL,
+      value REAL NOT NULL,
+      notes TEXT,
+      FOREIGN KEY (activity_id) REFERENCES activities (id)
+    );
+
+    CREATE TABLE IF NOT EXISTS daily_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp INTEGER NOT NULL,
+      social_did TEXT NOT NULL DEFAULT '[]',
+      social_wished TEXT NOT NULL DEFAULT '[]',
+      social_ratings TEXT NOT NULL DEFAULT '{}',
+      productivity_did TEXT NOT NULL DEFAULT '[]',
+      productivity_wished TEXT NOT NULL DEFAULT '[]',
+      productivity_ratings TEXT NOT NULL DEFAULT '{}',
+      wellness TEXT,
+      news_types TEXT NOT NULL DEFAULT '[]'
+    );
+  `);
+  
+  logInfo('createTables', 'All database tables created successfully');
+  
+  await runMigrations(db);
+};
+
+const runMigrations = async (db: SQLite.SQLiteDatabase): Promise<void> => {
+  try {
+    // Migration: Recreate schedules table with updated CHECK constraint for all schedule types
+    const schedulesColumns = await db.getAllAsync<{ name: string }>(
+      "PRAGMA table_info(schedules)"
+    );
+    const scheduleColumnNames = schedulesColumns.map((col: any) => col.name);
+    
+    // Check if we need to migrate: activity_id column missing means old schema
+    if (schedulesColumns.length > 0 && !scheduleColumnNames.includes('activity_id')) {
+      logInfo('runMigrations', 'Adding activity_id column to schedules table...');
+      
+      try {
+        await db.execAsync('ALTER TABLE schedules ADD COLUMN activity_id INTEGER');
+        await db.execAsync('CREATE INDEX IF NOT EXISTS idx_schedules_activity_id ON schedules (activity_id)');
+        logInfo('runMigrations', 'Added activity_id column to schedules');
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column')) {
+          logError('runMigrations', `Failed to add activity_id column: ${e.message}`);
+        }
+      }
+    }
+    
+    // Migration: Add didnt_sleep column to sleep_logs if missing
+    const sleepLogsColumns = await db.getAllAsync<{ name: string }>(
+      "PRAGMA table_info(sleep_logs)"
+    );
+    const columnNames = sleepLogsColumns.map((col: any) => col.name);
+    
+    if (!columnNames.includes('didnt_sleep')) {
+      try {
+        await db.execAsync(`ALTER TABLE sleep_logs ADD COLUMN didnt_sleep INTEGER DEFAULT 0`);
+        logInfo('runMigrations', 'Added didnt_sleep column to sleep_logs');
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column')) {
+          logError('runMigrations', e);
+        }
+      }
+    }
+    
+    if (!columnNames.includes('logged_at')) {
+      try {
+        await db.execAsync(`ALTER TABLE sleep_logs ADD COLUMN logged_at INTEGER`);
+        logInfo('runMigrations', 'Added logged_at column to sleep_logs');
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column')) {
+          logError('runMigrations', e);
+        }
+      }
+    }
+    
+    // Migration: Add accuracy and speed columns to cognitive_test_results if missing
+    const cogTestColumns = await db.getAllAsync<{ name: string }>(
+      "PRAGMA table_info(cognitive_test_results)"
+    );
+    const cogColumnNames = cogTestColumns.map((col: any) => col.name);
+    
+    if (!cogColumnNames.includes('accuracy')) {
+      try {
+        await db.execAsync(`ALTER TABLE cognitive_test_results ADD COLUMN accuracy REAL DEFAULT 0`);
+        logInfo('runMigrations', 'Added accuracy column to cognitive_test_results');
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column')) {
+          logError('runMigrations', e);
+        }
+      }
+    }
+    
+    if (!cogColumnNames.includes('speed')) {
+      try {
+        await db.execAsync(`ALTER TABLE cognitive_test_results ADD COLUMN speed REAL DEFAULT 0`);
+        logInfo('runMigrations', 'Added speed column to cognitive_test_results');
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column')) {
+          logError('runMigrations', e);
+        }
+      }
+    }
+    
+    logInfo('runMigrations', 'Migrations completed successfully');
+  } catch (error) {
+    logError('runMigrations', error);
   }
 };
 

@@ -1,357 +1,534 @@
-// DISABLED FOR V1 - Re-enable for Mk II
-/*
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, TouchableOpacity, ScrollView, Alert, Modal, TextInput } from 'react-native';
+import React, { useState, useMemo, useCallback } from 'react';
+import { StyleSheet, TouchableOpacity, View, SectionList, Alert, Modal, Platform } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { useRouter } from 'expo-router';
-import { getSleepLogs, updateSleepLog, SleepLog } from '@/database/sleep';
-import { scheduleSleepReminders } from '@/services/reminder-scheduler';
+import { SleepLog, getSleepLogs, deleteSleepLog, formatDuration, updateSleepLog } from '@/database/sleep';
+import { Ionicons } from '@expo/vector-icons';
+import { useThemeColor } from '@/hooks/use-theme-color';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { Swipeable } from 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useHierarchicalBack } from '@/hooks/use-hierarchical-back';
+import { SleepPrompt } from '@/components/sleep-prompt';
+
+type ViewMode = 'log' | 'history';
+
+interface LogSection {
+  title: string;
+  data: SleepLog[];
+}
+
+const formatDateHeader = (timestamp: number): string => {
+  const date = new Date(timestamp * 1000);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const logDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  
+  if (logDate.getTime() === today.getTime()) return 'Today';
+  if (logDate.getTime() === yesterday.getTime()) return 'Yesterday';
+  
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const formatTime = (timestamp: number): string => {
+  const date = new Date(timestamp * 1000);
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+};
 
 export default function SleepLogsScreen() {
-  const router = useRouter();
+  const [viewMode, setViewMode] = useState<ViewMode>('log');
   const [sleepLogs, setSleepLogs] = useState<SleepLog[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [showSleepPrompt, setShowSleepPrompt] = useState(false);
   const [editingLog, setEditingLog] = useState<SleepLog | null>(null);
-  const [editSleepStart, setEditSleepStart] = useState('');
-  const [editSleepEnd, setEditSleepEnd] = useState('');
+  const [editSleepStart, setEditSleepStart] = useState(new Date());
+  const [editSleepEnd, setEditSleepEnd] = useState(new Date());
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
+  const [pendingStartDate, setPendingStartDate] = useState<Date | null>(null);
+  const [pendingEndDate, setPendingEndDate] = useState<Date | null>(null);
+  const tintColor = useThemeColor({}, 'tint');
+  const router = useRouter();
+  
+  useHierarchicalBack('sleep-logs');
 
-  useEffect(() => {
-    loadSleepLogs();
-  }, []);
-
-  const loadSleepLogs = async () => {
+  const loadHistory = useCallback(async () => {
     try {
-      const logs = await getSleepLogs(50); // Load last 50 sleep logs
+      const logs = await getSleepLogs();
       setSleepLogs(logs);
     } catch (error) {
-      console.error('Error loading sleep logs:', error);
-      Alert.alert('Error', 'Failed to load sleep logs');
-    } finally {
-      setLoading(false);
+      console.error('Failed to load sleep history:', error);
     }
-  };
+  }, []);
 
-  const formatDateTime = (timestamp: number): string => {
-    const date = new Date(timestamp * 1000);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
+  useFocusEffect(
+    useCallback(() => {
+      if (viewMode === 'history') {
+        loadHistory();
+      }
+    }, [loadHistory, viewMode])
+  );
 
-  const formatDuration = (seconds: number): string => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`;
-    } else {
-      return `${minutes}m`;
+  const handleDeleteLog = useCallback(async (logId: number) => {
+    Alert.alert(
+      'Delete Entry',
+      'Are you sure you want to delete this sleep log?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteSleepLog(logId);
+              setSleepLogs(prev => prev.filter(log => log.id !== logId));
+            } catch (error) {
+              console.error('Failed to delete log:', error);
+              Alert.alert('Error', 'Failed to delete sleep log');
+            }
+          }
+        }
+      ]
+    );
+  }, []);
+
+  const handleEditLog = useCallback((log: SleepLog) => {
+    if (log.didnt_sleep) {
+      Alert.alert('Cannot Edit', 'This entry indicates no sleep was logged.');
+      return;
     }
-  };
-
-  const formatDateTimeForInput = (timestamp: number): string => {
-    const date = new Date(timestamp * 1000);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    
-    return `${year}-${month}-${day} ${hours}:${minutes}`;
-  };
-
-  const parseDateTimeInput = (input: string): number => {
-    // Expected format: YYYY-MM-DD HH:MM
-    const date = new Date(input);
-    return Math.floor(date.getTime() / 1000);
-  };
-
-  const handleEditLog = (log: SleepLog) => {
     setEditingLog(log);
-    setEditSleepStart(formatDateTimeForInput(log.sleep_start));
-    setEditSleepEnd(formatDateTimeForInput(log.sleep_end));
-  };
+    setEditSleepStart(new Date((log.sleep_start || 0) * 1000));
+    setEditSleepEnd(new Date((log.sleep_end || 0) * 1000));
+    setPendingStartDate(null);
+    setPendingEndDate(null);
+  }, []);
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = useCallback(async () => {
     if (!editingLog) return;
-
+    
+    const startTimestamp = Math.floor(editSleepStart.getTime() / 1000);
+    const endTimestamp = Math.floor(editSleepEnd.getTime() / 1000);
+    
+    if (endTimestamp <= startTimestamp) {
+      Alert.alert('Invalid Times', 'Wake time must be after sleep time.');
+      return;
+    }
+    
     try {
-      const newSleepStart = parseDateTimeInput(editSleepStart);
-      const newSleepEnd = parseDateTimeInput(editSleepEnd);
-
-      if (newSleepStart >= newSleepEnd) {
-        Alert.alert('Error', 'Sleep start time must be before sleep end time');
-        return;
-      }
-
-      await updateSleepLog(editingLog.id, newSleepStart, newSleepEnd);
-      
-      // Reschedule sleep reminders since sleep data changed
-      try {
-        await scheduleSleepReminders();
-      } catch (reminderError) {
-        console.error('Failed to reschedule sleep reminders:', reminderError);
-        // Don't fail the update if reminder scheduling fails
-      }
-      
+      await updateSleepLog(editingLog.id, startTimestamp, endTimestamp);
+      setSleepLogs(prev => prev.map(log => 
+        log.id === editingLog.id 
+          ? { ...log, sleep_start: startTimestamp, sleep_end: endTimestamp, duration_seconds: endTimestamp - startTimestamp, manually_edited: true }
+          : log
+      ));
       setEditingLog(null);
-      loadSleepLogs(); // Refresh the list
-      Alert.alert('Success', 'Sleep log updated successfully');
     } catch (error) {
-      console.error('Error updating sleep log:', error);
+      console.error('Failed to update log:', error);
       Alert.alert('Error', 'Failed to update sleep log');
     }
-  };
+  }, [editingLog, editSleepStart, editSleepEnd]);
 
-  const handleCancelEdit = () => {
-    setEditingLog(null);
-    setEditSleepStart('');
-    setEditSleepEnd('');
-  };
+  const handleStartDateChange = useCallback((event: any, date?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowStartPicker(false);
+      if (event.type === 'set' && date) {
+        if (pickerMode === 'date') {
+          setPendingStartDate(date);
+          setPickerMode('time');
+          setTimeout(() => setShowStartPicker(true), 100);
+        } else {
+          const finalDate = new Date(pendingStartDate || editSleepStart);
+          finalDate.setHours(date.getHours(), date.getMinutes());
+          setEditSleepStart(finalDate);
+          setPendingStartDate(null);
+          setPickerMode('date');
+        }
+      } else {
+        setPendingStartDate(null);
+        setPickerMode('date');
+      }
+    } else if (date) {
+      setEditSleepStart(date);
+    }
+  }, [pickerMode, pendingStartDate, editSleepStart]);
 
-  if (loading) {
-    return (
-      <ThemedView style={styles.container}>
-        <ThemedText>Loading sleep logs...</ThemedText>
-      </ThemedView>
-    );
-  }
+  const handleEndDateChange = useCallback((event: any, date?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowEndPicker(false);
+      if (event.type === 'set' && date) {
+        if (pickerMode === 'date') {
+          setPendingEndDate(date);
+          setPickerMode('time');
+          setTimeout(() => setShowEndPicker(true), 100);
+        } else {
+          const finalDate = new Date(pendingEndDate || editSleepEnd);
+          finalDate.setHours(date.getHours(), date.getMinutes());
+          setEditSleepEnd(finalDate);
+          setPendingEndDate(null);
+          setPickerMode('date');
+        }
+      } else {
+        setPendingEndDate(null);
+        setPickerMode('date');
+      }
+    } else if (date) {
+      setEditSleepEnd(date);
+    }
+  }, [pickerMode, pendingEndDate, editSleepEnd]);
 
-  return (
-    <ThemedView style={styles.container}>
-      <ThemedView style={styles.header}>
-        <ThemedText type="title" style={styles.title}>Sleep Logs</ThemedText>
-        <ThemedText style={styles.subtitle}>
-          Review and edit your sleep records
-        </ThemedText>
-      </ThemedView>
+  const historySections = useMemo((): LogSection[] => {
+    const grouped: Record<string, SleepLog[]> = {};
+    sleepLogs.forEach(log => {
+      const header = formatDateHeader(log.logged_at);
+      if (!grouped[header]) grouped[header] = [];
+      grouped[header].push(log);
+    });
+    return Object.entries(grouped).map(([title, data]) => ({ title, data }));
+  }, [sleepLogs]);
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {sleepLogs.length === 0 ? (
-          <ThemedView style={styles.emptyState}>
-            <ThemedText style={styles.emptyText}>
-              No sleep logs yet. Sleep tracking will automatically log your sleep when enabled.
-            </ThemedText>
-          </ThemedView>
-        ) : (
-          sleepLogs.map((log) => (
-            <ThemedView key={log.id} style={styles.logCard}>
-              <ThemedView style={styles.logHeader}>
-                <ThemedText style={styles.logDate}>
-                  {new Date(log.sleep_start * 1000).toLocaleDateString('en-US', {
-                    weekday: 'short',
-                    month: 'short',
-                    day: 'numeric'
-                  })}
-                </ThemedText>
-                {log.manually_edited && (
-                  <ThemedText style={styles.editedBadge}>Edited</ThemedText>
-                )}
-              </ThemedView>
+  const handleViewModeChange = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    if (mode === 'history') {
+      loadHistory();
+    }
+  }, [loadHistory]);
 
-              <ThemedView style={styles.logDetails}>
-                <ThemedView style={styles.timeRow}>
-                  <ThemedText style={styles.timeLabel}>Sleep:</ThemedText>
-                  <ThemedText style={styles.timeValue}>
-                    {formatDateTime(log.sleep_start)}
-                  </ThemedText>
-                </ThemedView>
+  const handleLogSleep = useCallback(() => {
+    setShowSleepPrompt(true);
+  }, []);
 
-                <ThemedView style={styles.timeRow}>
-                  <ThemedText style={styles.timeLabel}>Wake:</ThemedText>
-                  <ThemedText style={styles.timeValue}>
-                    {formatDateTime(log.sleep_end)}
-                  </ThemedText>
-                </ThemedView>
+  const handleSleepPromptClose = useCallback(() => {
+    setShowSleepPrompt(false);
+    if (viewMode === 'history') {
+      loadHistory();
+    }
+  }, [viewMode, loadHistory]);
 
-                <ThemedView style={styles.timeRow}>
-                  <ThemedText style={styles.timeLabel}>Duration:</ThemedText>
-                  <ThemedText style={styles.durationValue}>
-                    {formatDuration(log.duration_seconds)}
-                  </ThemedText>
-                </ThemedView>
-              </ThemedView>
-
-              <TouchableOpacity
-                style={styles.editButton}
-                onPress={() => handleEditLog(log)}
-              >
-                <ThemedText style={styles.editButtonText}>Edit</ThemedText>
-              </TouchableOpacity>
-            </ThemedView>
-          ))
-        )}
-      </ScrollView>
-
-      <TouchableOpacity 
-        style={styles.backButton} 
-        onPress={() => router.back()}
+  const renderHistoryItem = useCallback(({ item }: { item: SleepLog }) => {
+    const renderRightActions = () => (
+      <TouchableOpacity
+        style={styles.deleteAction}
+        onPress={() => handleDeleteLog(item.id)}
       >
-        <ThemedText style={styles.backButtonText}>Back</ThemedText>
+        <Ionicons name="trash-outline" size={24} color="white" />
+      </TouchableOpacity>
+    );
+
+    return (
+      <Swipeable renderRightActions={renderRightActions}>
+        <View style={styles.historyItem}>
+          <View style={[styles.historyIconContainer, { backgroundColor: item.didnt_sleep ? '#8E8E93' : tintColor }]}>
+            <Ionicons name={item.didnt_sleep ? 'close-circle-outline' : 'moon-outline'} size={20} color="white" />
+          </View>
+          <View style={styles.historyTextContainer}>
+            {item.didnt_sleep ? (
+              <>
+                <ThemedText style={styles.historyName}>Didn't Sleep</ThemedText>
+                <ThemedText style={styles.historyTime}>Logged at {formatTime(item.logged_at)}</ThemedText>
+              </>
+            ) : (
+              <>
+                <ThemedText style={styles.historyName}>
+                  {item.duration_seconds ? formatDuration(item.duration_seconds) : 'Unknown duration'}
+                </ThemedText>
+                <ThemedText style={styles.historyTime}>
+                  {item.sleep_start ? formatTime(item.sleep_start) : '?'} - {item.sleep_end ? formatTime(item.sleep_end) : '?'}
+                </ThemedText>
+              </>
+            )}
+          </View>
+          {item.manually_edited && (
+            <Ionicons name="pencil" size={14} color="#8E8E93" style={styles.editedIcon} />
+          )}
+          {!item.didnt_sleep && (
+            <TouchableOpacity onPress={() => handleEditLog(item)} style={styles.editButton}>
+              <Ionicons name="create-outline" size={20} color={tintColor} />
+            </TouchableOpacity>
+          )}
+        </View>
+      </Swipeable>
+    );
+  }, [handleDeleteLog, handleEditLog, tintColor]);
+
+  const renderSectionHeader = useCallback(({ section }: { section: LogSection }) => (
+    <ThemedView style={styles.sectionHeader}>
+      <ThemedText style={styles.sectionHeaderText}>{section.title}</ThemedText>
+    </ThemedView>
+  ), []);
+
+  const renderEmptyHistory = useCallback(() => (
+    <View style={styles.emptyContainer}>
+      <Ionicons name="moon-outline" size={64} color="#8E8E93" />
+      <ThemedText style={styles.emptyText}>No sleep logs yet</ThemedText>
+      <ThemedText style={styles.emptySubtext}>Tap "Log Sleep" to record your sleep</ThemedText>
+    </View>
+  ), []);
+
+  const renderLogView = useCallback(() => (
+    <View style={styles.logViewContainer}>
+      <Ionicons name="moon-outline" size={80} color={tintColor} style={styles.logIcon} />
+      <ThemedText type="title" style={styles.logTitle}>Track Your Sleep</ThemedText>
+      <ThemedText style={styles.logDescription}>
+        Logging your sleep helps track how rest affects your cognitive performance and well-being.
+      </ThemedText>
+      
+      <TouchableOpacity
+        style={[styles.logButton, { backgroundColor: tintColor }]}
+        onPress={handleLogSleep}
+      >
+        <Ionicons name="bed-outline" size={24} color="white" style={styles.buttonIcon} />
+        <ThemedText style={styles.logButtonText}>Log Sleep Now</ThemedText>
       </TouchableOpacity>
 
-      <Modal
-        visible={editingLog !== null}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={handleCancelEdit}
-      >
-        <ThemedView style={styles.modalOverlay}>
-          <ThemedView style={styles.modalContent}>
-            <ThemedText style={styles.modalTitle}>Edit Sleep Log</ThemedText>
-            
-            <ThemedView style={styles.inputSection}>
-              <ThemedText style={styles.inputLabel}>Sleep Start (YYYY-MM-DD HH:MM)</ThemedText>
-              <TextInput
-                style={styles.textInput}
-                value={editSleepStart}
-                onChangeText={setEditSleepStart}
-                placeholder="2024-01-01 22:30"
-                placeholderTextColor="#8E8E93"
-              />
-            </ThemedView>
+      <View style={styles.infoBox}>
+        <View style={styles.infoRow}>
+          <Ionicons name="time-outline" size={18} color={tintColor} />
+          <ThemedText style={styles.infoText}>
+            You'll be prompted automatically every 24 hours
+          </ThemedText>
+        </View>
+        <View style={styles.infoRow}>
+          <Ionicons name="analytics-outline" size={18} color={tintColor} />
+          <ThemedText style={styles.infoText}>
+            View your sleep history in the History tab
+          </ThemedText>
+        </View>
+      </View>
+    </View>
+  ), [tintColor, handleLogSleep]);
 
-            <ThemedView style={styles.inputSection}>
-              <ThemedText style={styles.inputLabel}>Sleep End (YYYY-MM-DD HH:MM)</ThemedText>
-              <TextInput
-                style={styles.textInput}
-                value={editSleepEnd}
-                onChangeText={setEditSleepEnd}
-                placeholder="2024-01-02 06:30"
-                placeholderTextColor="#8E8E93"
-              />
-            </ThemedView>
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemedView style={styles.container} safeArea>
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.back()}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="chevron-back" size={28} color={tintColor} />
+          </TouchableOpacity>
+          <ThemedText type="title" style={styles.title}>
+            Sleep
+          </ThemedText>
+          <View style={styles.headerPlaceholder} />
+        </View>
 
-            <ThemedView style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={handleCancelEdit}
-              >
-                <ThemedText style={styles.cancelButtonText}>Cancel</ThemedText>
-              </TouchableOpacity>
+        <View style={styles.toggleContainer}>
+          <TouchableOpacity
+            style={[styles.toggleButton, viewMode === 'log' && { backgroundColor: tintColor }]}
+            onPress={() => handleViewModeChange('log')}
+          >
+            <ThemedText style={[styles.toggleText, viewMode === 'log' && styles.toggleTextActive]}>
+              Log
+            </ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.toggleButton, viewMode === 'history' && { backgroundColor: tintColor }]}
+            onPress={() => handleViewModeChange('history')}
+          >
+            <ThemedText style={[styles.toggleText, viewMode === 'history' && styles.toggleTextActive]}>
+              History
+            </ThemedText>
+          </TouchableOpacity>
+        </View>
 
-              <TouchableOpacity
-                style={styles.saveButton}
-                onPress={handleSaveEdit}
-              >
-                <ThemedText style={styles.saveButtonText}>Save</ThemedText>
-              </TouchableOpacity>
-            </ThemedView>
-          </ThemedView>
-        </ThemedView>
-      </Modal>
-    </ThemedView>
+        {viewMode === 'log' ? (
+          renderLogView()
+        ) : (
+          <SectionList
+            sections={historySections}
+            renderItem={renderHistoryItem}
+            renderSectionHeader={renderSectionHeader}
+            keyExtractor={(item) => item.id.toString()}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.historyScrollContent}
+            style={styles.scrollView}
+            ListEmptyComponent={renderEmptyHistory}
+            stickySectionHeadersEnabled={true}
+          />
+        )}
+
+        <SleepPrompt
+          visible={showSleepPrompt}
+          onClose={handleSleepPromptClose}
+          isOverdueReminder={false}
+        />
+
+        <Modal visible={editingLog !== null} transparent animationType="fade">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <ThemedText type="subtitle" style={styles.modalTitle}>Edit Sleep Log</ThemedText>
+              
+              <View style={styles.editRow}>
+                <ThemedText style={styles.editLabel}>Sleep Time:</ThemedText>
+                <TouchableOpacity 
+                  style={[styles.timeButton, { borderColor: tintColor }]} 
+                  onPress={() => { setPickerMode('date'); setShowStartPicker(true); }}
+                >
+                  <ThemedText style={styles.timeButtonText}>
+                    {editSleepStart.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                  </ThemedText>
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.editRow}>
+                <ThemedText style={styles.editLabel}>Wake Time:</ThemedText>
+                <TouchableOpacity 
+                  style={[styles.timeButton, { borderColor: tintColor }]} 
+                  onPress={() => { setPickerMode('date'); setShowEndPicker(true); }}
+                >
+                  <ThemedText style={styles.timeButtonText}>
+                    {editSleepEnd.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                  </ThemedText>
+                </TouchableOpacity>
+              </View>
+
+              {Platform.OS === 'ios' && showStartPicker && (
+                <DateTimePicker
+                  value={editSleepStart}
+                  mode="datetime"
+                  display="spinner"
+                  onChange={handleStartDateChange}
+                />
+              )}
+              {Platform.OS === 'ios' && showEndPicker && (
+                <DateTimePicker
+                  value={editSleepEnd}
+                  mode="datetime"
+                  display="spinner"
+                  onChange={handleEndDateChange}
+                />
+              )}
+              
+              <View style={styles.modalButtons}>
+                <TouchableOpacity 
+                  style={styles.cancelButton} 
+                  onPress={() => setEditingLog(null)}
+                >
+                  <ThemedText style={styles.cancelButtonText}>Cancel</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.saveButton, { backgroundColor: tintColor }]} 
+                  onPress={handleSaveEdit}
+                >
+                  <ThemedText style={styles.saveButtonText}>Save</ThemedText>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {Platform.OS === 'android' && showStartPicker && (
+          <DateTimePicker
+            value={pendingStartDate || editSleepStart}
+            mode={pickerMode}
+            display="default"
+            onChange={handleStartDateChange}
+          />
+        )}
+        {Platform.OS === 'android' && showEndPicker && (
+          <DateTimePicker
+            value={pendingEndDate || editSleepEnd}
+            mode={pickerMode}
+            display="default"
+            onChange={handleEndDateChange}
+          />
+        )}
+      </ThemedView>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
   },
   header: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 40,
-    marginBottom: 20,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+    marginBottom: 12,
+  },
+  backButton: {
+    padding: 4,
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
-    marginBottom: 8,
+    flex: 1,
+    marginLeft: 8,
   },
-  subtitle: {
-    fontSize: 16,
-    textAlign: 'center',
-    opacity: 0.7,
+  headerPlaceholder: {
+    width: 32,
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    marginBottom: 16,
+    backgroundColor: '#E0E0E0',
+    borderRadius: 8,
+    padding: 4,
+  },
+  toggleButton: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  toggleText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  toggleTextActive: {
+    color: 'white',
   },
   scrollView: {
     flex: 1,
+    paddingHorizontal: 20,
   },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 40,
+  historyScrollContent: {
+    paddingBottom: 100,
+    flexGrow: 1,
   },
-  emptyText: {
-    fontSize: 16,
-    textAlign: 'center',
-    opacity: 0.7,
-  },
-  logCard: {
-    backgroundColor: '#F2F2F7',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
-  },
-  logHeader: {
+  historyItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    backgroundColor: 'transparent',
   },
-  logDate: {
+  historyIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  historyTextContainer: {
+    flex: 1,
+  },
+  historyName: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#000',
-  },
-  editedBadge: {
-    backgroundColor: '#FF9500',
-    color: 'white',
-    fontSize: 10,
-    fontWeight: '600',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  logDetails: {
-    marginBottom: 12,
-  },
-  timeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  timeLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  timeValue: {
-    fontSize: 14,
     fontWeight: '500',
-    color: '#000',
   },
-  durationValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#007AFF',
+  historyTime: {
+    fontSize: 13,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  editedIcon: {
+    marginLeft: 8,
   },
   editButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 6,
-    alignSelf: 'flex-end',
-  },
-  editButtonText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  backButton: {
-    backgroundColor: '#8E8E93',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  backButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '500',
+    padding: 8,
+    marginLeft: 4,
   },
   modalOverlay: {
     flex: 1,
@@ -362,57 +539,54 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: 'white',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 24,
     width: '100%',
     maxWidth: 400,
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: 'bold',
+    fontWeight: '600',
+    marginBottom: 24,
     textAlign: 'center',
+  },
+  editRow: {
     marginBottom: 20,
-    color: '#000',
   },
-  inputSection: {
-    marginBottom: 16,
-  },
-  inputLabel: {
+  editLabel: {
     fontSize: 14,
-    fontWeight: '500',
-    marginBottom: 6,
-    color: '#000',
+    marginBottom: 8,
+    opacity: 0.7,
   },
-  textInput: {
+  timeButton: {
     borderWidth: 1,
-    borderColor: '#E0E0E0',
     borderRadius: 8,
     padding: 12,
+    alignItems: 'center',
+  },
+  timeButtonText: {
     fontSize: 16,
-    backgroundColor: '#F8F8F8',
-    color: '#000',
   },
   modalButtons: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 24,
     gap: 12,
-    marginTop: 8,
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: '#8E8E93',
-    paddingVertical: 12,
+    padding: 14,
     borderRadius: 8,
     alignItems: 'center',
+    backgroundColor: '#E0E0E0',
   },
   cancelButtonText: {
-    color: 'white',
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   saveButton: {
     flex: 1,
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
+    padding: 14,
     borderRadius: 8,
     alignItems: 'center',
   },
@@ -421,9 +595,97 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  sectionHeader: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+  },
+  sectionHeaderText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#8E8E93',
+    textTransform: 'uppercase',
+  },
+  deleteAction: {
+    backgroundColor: '#FF3B30',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+  },
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 80,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+    color: '#8E8E93',
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 8,
+  },
+  logViewContainer: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 30,
+    paddingTop: 40,
+  },
+  logIcon: {
+    marginBottom: 20,
+  },
+  logTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  logDescription: {
+    fontSize: 15,
+    textAlign: 'center',
+    opacity: 0.7,
+    marginBottom: 32,
+    lineHeight: 22,
+  },
+  logButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    marginBottom: 32,
+    width: '100%',
+  },
+  logButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  buttonIcon: {
+    marginRight: 10,
+  },
+  infoBox: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: 'rgba(128, 128, 128, 0.3)',
+    borderRadius: 12,
+    padding: 16,
+    backgroundColor: 'rgba(128, 128, 128, 0.05)',
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+    gap: 10,
+  },
+  infoText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    opacity: 0.8,
+  },
 });
-*/
-
-export default function SleepLogsScreen() {
-  return null;
-}

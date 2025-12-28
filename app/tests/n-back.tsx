@@ -9,6 +9,8 @@ import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
 import { validateTestPrerequisites, handleTestSaveError } from '@/utils/test-validation';
 import { checkDatabaseHealth } from '@/database/database';
+import { useHierarchicalBack } from '@/hooks/use-hierarchical-back';
+import { Ionicons } from '@expo/vector-icons';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 const SHAPE_SIZE = Math.min(250, screenWidth * 0.6, screenHeight * 0.25); // Responsive size with max 250px
@@ -34,6 +36,8 @@ export default function NBackTestScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
+  
+  useHierarchicalBack('tests/n-back');
   
   const [gameState, setGameState] = useState<'ready' | 'instructions' | 'playing' | 'finished'>('ready');
   const [currentTrial, setCurrentTrial] = useState(0);
@@ -197,7 +201,8 @@ export default function NBackTestScreen() {
     const falseAlarms = trials.filter(t => !t.isMatch && t.userResponse === true);
     const correctRejections = trials.filter(t => !t.isMatch && t.userResponse === false);
     
-    const accuracy = (hits.length + correctRejections.length) / TRIAL_COUNT;
+    const accuracyDecimal = (hits.length + correctRejections.length) / TRIAL_COUNT;
+    const accuracy = accuracyDecimal * 100;
     const hitRate = matches.length > 0 ? hits.length / matches.length : 0;
     const falseAlarmRate = (TRIAL_COUNT - matches.length) > 0 ? falseAlarms.length / (TRIAL_COUNT - matches.length) : 0;
     
@@ -218,7 +223,7 @@ export default function NBackTestScreen() {
     const speed = averageHitResponseTime;
     
     const rawData = {
-      accuracy,
+      accuracy: accuracyDecimal,
       hits: hits.length,
       misses: misses.length,
       falseAlarms: falseAlarms.length,
@@ -236,7 +241,7 @@ export default function NBackTestScreen() {
         const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
         const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
         
-        const score = Math.floor(accuracy * 100);
+        const score = Math.round(accuracy);
         await saveCognitiveTestResult('n_back', score, rawData, undefined, studyId, supplementLogId, accuracy, speed);
         
         if (scheduledTest) {
@@ -293,7 +298,7 @@ export default function NBackTestScreen() {
   };
 
   const handleBackToMenu = () => {
-    if (params.sequence === 'all-seven') {
+    if (params.sequence === 'all-nine') {
       router.push('/tests/all-nine');
     } else {
       router.push('/cognitive-tests');
@@ -301,7 +306,7 @@ export default function NBackTestScreen() {
   };
 
   const handleFinishBattery = () => {
-    router.push('/cognitive-tests');
+    router.push('/tests/stroop?sequence=all-nine');
   };
 
   const handlePlayAgain = () => {
@@ -346,6 +351,13 @@ export default function NBackTestScreen() {
       <ThemedView style={styles.container} safeArea>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.instructionsContainer}>
+            {params.sequence === 'all-nine' && (
+              <ThemedView style={[styles.progressBanner, { backgroundColor: tintColor + '15', borderColor: tintColor }]}>
+                <ThemedText style={[styles.progressText, { color: tintColor }]}>
+                  Test 8 of 9
+                </ThemedText>
+              </ThemedView>
+            )}
             <ThemedText type="title" style={styles.title}>N-Back Test</ThemedText>
             {scheduledTest && studyContext?.supplement_name && (
               <ThemedView style={[styles.studyBanner, { backgroundColor: tintColor + '20', borderColor: tintColor }]}>
@@ -436,13 +448,13 @@ export default function NBackTestScreen() {
                accuracy >= 0.65 ? 'Good cognitive performance!' : 
                accuracy >= 0.5 ? 'Fair performance!' : 'Keep practicing!'}
             </ThemedText>
-            {params.sequence === 'all-seven' ? (
+            {params.sequence === 'all-nine' ? (
               <>
                 <TouchableOpacity 
                   style={[styles.startButton, { backgroundColor: tintColor }]} 
                   onPress={handleFinishBattery}
                 >
-                  <ThemedText style={styles.startButtonText}>Complete Test Battery</ThemedText>
+                  <ThemedText style={styles.startButtonText}>Continue to Stroop</ThemedText>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
                   <ThemedText style={styles.backButtonText}>Exit Test Battery</ThemedText>
@@ -469,9 +481,18 @@ export default function NBackTestScreen() {
 
   return (
     <ThemedView style={styles.container} safeArea>
-      <ThemedView style={styles.gameHeader}>
-        <ThemedText style={styles.trialText}>Trial: {currentTrial + 1}/20</ThemedText>
-        <ThemedText style={styles.instructionText}>2-Back Test</ThemedText>
+      <ThemedView style={[styles.infoBanner, { borderColor: tintColor }]}>
+        <TouchableOpacity
+          style={styles.bannerBackButton}
+          onPress={handleBackToMenu}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="arrow-back" size={20} color={tintColor} />
+        </TouchableOpacity>
+        <View style={styles.bannerStats}>
+          <ThemedText style={styles.bannerStatText}>Trial: {currentTrial + 1}/20</ThemedText>
+          <ThemedText style={styles.bannerStatText}>2-Back Test</ThemedText>
+        </View>
       </ThemedView>
 
       <View style={styles.stimulusArea}>
@@ -581,12 +602,30 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     lineHeight: 24,
   },
-  gameHeader: {
+  infoBanner: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 100,
-    paddingBottom: 20,
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginTop: 20,
+    marginBottom: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.03)',
+  },
+  bannerBackButton: {
+    padding: 4,
+    marginRight: 12,
+  },
+  bannerStats: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  bannerStatText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   trialText: {
     fontSize: 18,
@@ -694,6 +733,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   warningText: {
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  progressBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 15,
+    alignItems: 'center',
+  },
+  progressText: {
     fontSize: 14,
     fontWeight: '600',
     textAlign: 'center',

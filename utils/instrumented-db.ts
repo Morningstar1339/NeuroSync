@@ -383,12 +383,14 @@ export const instrumentedGetSleepLogs = async (
     if (!isValidId(log.id)) {
       reportViolation(MODULE_SLEEP, 'getSleepLogs', `result[${i}].id_valid`, log.id, 'positive integer', 'post');
     }
-    if (log.sleep_end <= log.sleep_start) {
-      reportViolation(MODULE_SLEEP, 'getSleepLogs', `result[${i}].sleep_end_after_start`, { sleep_start: log.sleep_start, sleep_end: log.sleep_end }, 'sleep_end > sleep_start', 'post');
-    }
-    const expectedDuration = log.sleep_end - log.sleep_start;
-    if (log.duration_seconds !== expectedDuration) {
-      reportViolation(MODULE_SLEEP, 'getSleepLogs', `result[${i}].duration_consistency`, { duration_seconds: log.duration_seconds, expected: expectedDuration }, 'duration_seconds === sleep_end - sleep_start', 'post');
+    if (!log.didnt_sleep && log.sleep_end !== null && log.sleep_start !== null) {
+      if (log.sleep_end <= log.sleep_start) {
+        reportViolation(MODULE_SLEEP, 'getSleepLogs', `result[${i}].sleep_end_after_start`, { sleep_start: log.sleep_start, sleep_end: log.sleep_end }, 'sleep_end > sleep_start', 'post');
+      }
+      const expectedDuration = log.sleep_end - log.sleep_start;
+      if (log.duration_seconds !== expectedDuration) {
+        reportViolation(MODULE_SLEEP, 'getSleepLogs', `result[${i}].duration_consistency`, { duration_seconds: log.duration_seconds, expected: expectedDuration }, 'duration_seconds === sleep_end - sleep_start', 'post');
+      }
     }
   }
 
@@ -423,8 +425,10 @@ export const instrumentedGetLastSleepLog = async (): Promise<sleep.SleepLog | nu
     if (!isValidId(result.id)) {
       reportViolation(MODULE_SLEEP, 'getLastSleepLog', 'result.id_valid', result.id, 'positive integer', 'post');
     }
-    if (result.sleep_end <= result.sleep_start) {
-      reportViolation(MODULE_SLEEP, 'getLastSleepLog', 'result.sleep_end_after_start', { sleep_start: result.sleep_start, sleep_end: result.sleep_end }, 'sleep_end > sleep_start', 'post');
+    if (!result.didnt_sleep && result.sleep_end !== null && result.sleep_start !== null) {
+      if (result.sleep_end <= result.sleep_start) {
+        reportViolation(MODULE_SLEEP, 'getLastSleepLog', 'result.sleep_end_after_start', { sleep_start: result.sleep_start, sleep_end: result.sleep_end }, 'sleep_end > sleep_start', 'post');
+      }
     }
   }
 

@@ -1,15 +1,16 @@
 import React, { useEffect } from 'react';
-import { StyleSheet, TouchableOpacity, Alert, ScrollView, Dimensions } from 'react-native';
+import { StyleSheet, TouchableOpacity, ScrollView, Dimensions, Image, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-// DISABLED FOR V1 - Re-enable for Mk II
-// import { SleepTracker } from '@/components/sleep-tracker';
 import { useRouter } from 'expo-router';
-import { notificationManager } from '@/services/notification-manager';
+import { useThemeColor } from '@/hooks/use-theme-color';
 import { isDatabaseInitialized } from '@/database/database';
 
 export default function HomeScreen() {
   const router = useRouter();
+  const tintColor = useThemeColor({}, 'tint');
+  const backgroundColor = useThemeColor({}, 'background');
 
   useEffect(() => {
     // Database should already be initialized by RootLayout
@@ -24,11 +25,6 @@ export default function HomeScreen() {
     };
     
     checkAppStatus();
-    
-    // Cleanup notification manager on unmount
-    return () => {
-      notificationManager.cleanup();
-    };
   }, []);
 
   const handleLogSupplement = () => {
@@ -44,19 +40,32 @@ export default function HomeScreen() {
     router.push('/cognitive-tests');
   };
 
-  const handleMenu = () => {
-    Alert.alert('Menu', 'Select an option:', [
-      // DISABLED FOR V1 - Re-enable for Mk II
-      // { text: 'Sleep Logs', onPress: () => router.push('/sleep-logs') },
-      { text: 'Export Data', onPress: () => router.push('/export') },
-      { text: 'Notifications', onPress: () => router.push('/notification-settings') },
-      { text: 'Help', onPress: () => router.push('/help') },
-      { text: 'Cancel', style: 'cancel' }
-    ]);
+  const handleActivities = () => {
+    router.push('/activities');
   };
 
-  const handleSettings = () => {
-    router.push('/settings');
+  const handleLogSleep = () => {
+    router.push('/sleep-logs');
+  };
+
+  const handleSchedules = () => {
+    router.push('/my-schedules');
+  };
+
+  const handleExport = () => {
+    router.push('/export');
+  };
+
+  const handleInsights = () => {
+    router.push('/insights');
+  };
+
+  const handleHelp = () => {
+    router.push('/help');
+  };
+
+  const handleDailyReview = () => {
+    router.push('/daily-review');
   };
 
   return (
@@ -65,12 +74,19 @@ export default function HomeScreen() {
         {/* DISABLED FOR V1 - Re-enable for Mk II */}
       {/* <SleepTracker /> */}
       <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title" style={styles.title}>NeuroSync</ThemedText>
+        <View style={[styles.logoContainer, { backgroundColor: backgroundColor }]}>
+          <Image 
+            source={require('@/assets/images/GrayMeter Logo.jpg')} 
+            style={styles.logo}
+            resizeMode="contain"
+          />
+        </View>
+        <ThemedText type="title" style={styles.title}>GrayMeter</ThemedText>
       </ThemedView>
 
       <ThemedView style={styles.buttonContainer}>
-        <TouchableOpacity style={styles.mainButton} onPress={handleLogSupplement}>
-          <ThemedText type="subtitle" style={styles.buttonText}>Log Supplement</ThemedText>
+        <TouchableOpacity style={[styles.mainButton, { backgroundColor: tintColor }]} onPress={handleLogSupplement}>
+          <ThemedText type="subtitle" style={[styles.buttonText, { color: backgroundColor }]}>Log Supplement</ThemedText>
         </TouchableOpacity>
 
         {/* DISABLED FOR V1 - Re-enable for Mk II */}
@@ -78,20 +94,40 @@ export default function HomeScreen() {
           <ThemedText type="subtitle" style={styles.buttonText}>Log Symptom</ThemedText>
         </TouchableOpacity> */}
 
-        <TouchableOpacity style={styles.mainButton} onPress={handleCognitiveTest}>
-          <ThemedText type="subtitle" style={styles.buttonText}>Cognitive Test</ThemedText>
+        <TouchableOpacity style={[styles.mainButton, { backgroundColor: tintColor }]} onPress={handleCognitiveTest}>
+          <ThemedText type="subtitle" style={[styles.buttonText, { color: backgroundColor }]}>Cognitive Test</ThemedText>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.mainButton, { backgroundColor: tintColor }]} onPress={handleActivities}>
+          <ThemedText type="subtitle" style={[styles.buttonText, { color: backgroundColor }]}>Log Activity</ThemedText>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.mainButton, { backgroundColor: tintColor }]} onPress={handleLogSleep}>
+          <ThemedText type="subtitle" style={[styles.buttonText, { color: backgroundColor }]}>Log Sleep</ThemedText>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.mainButton, { backgroundColor: tintColor }]} onPress={handleDailyReview}>
+          <ThemedText type="subtitle" style={[styles.buttonText, { color: backgroundColor }]}>Daily Review</ThemedText>
         </TouchableOpacity>
       </ThemedView>
 
-      <ThemedView style={styles.bottomContainer}>
-        <TouchableOpacity style={styles.smallButton} onPress={handleMenu}>
-          <ThemedText style={styles.smallButtonText}>Menu</ThemedText>
+      <View style={styles.bottomContainer}>
+        <TouchableOpacity style={[styles.iconButton, { backgroundColor: tintColor + '15' }]} onPress={handleInsights}>
+          <Ionicons name="analytics-outline" size={28} color={tintColor} />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.iconButton, { backgroundColor: tintColor + '15' }]} onPress={handleSchedules}>
+          <Ionicons name="calendar-outline" size={28} color={tintColor} />
         </TouchableOpacity>
         
-        <TouchableOpacity style={styles.smallButton} onPress={handleSettings}>
-          <ThemedText style={styles.smallButtonText}>Settings</ThemedText>
+        <TouchableOpacity style={[styles.iconButton, { backgroundColor: tintColor + '15' }]} onPress={handleExport}>
+          <Ionicons name="download-outline" size={28} color={tintColor} />
         </TouchableOpacity>
-      </ThemedView>
+        
+        <TouchableOpacity style={[styles.iconButton, { backgroundColor: tintColor + '15' }]} onPress={handleHelp}>
+          <Ionicons name="information-circle-outline" size={28} color={tintColor} />
+        </TouchableOpacity>
+      </View>
       </ScrollView>
     </ThemedView>
   );
@@ -110,54 +146,56 @@ const styles = StyleSheet.create({
   },
   titleContainer: {
     alignItems: 'center',
-    marginTop: 60,
-    marginBottom: 60,
+    marginTop: 16,
+    marginBottom: 20,
   },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: 'bold',
+  },
+  logoContainer: {
+    width: 160,
+    height: 160,
+    borderRadius: 24,
+    overflow: 'hidden',
+    marginBottom: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logo: {
+    width: 150,
+    height: 150,
   },
   buttonContainer: {
     justifyContent: 'center',
-    gap: 24,
+    gap: 12,
     paddingHorizontal: 20,
-    marginVertical: 40,
+    marginVertical: 16,
   },
   mainButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 24,
+    paddingVertical: 16,
     paddingHorizontal: 20,
     borderRadius: 12,
     alignItems: 'center',
-    minHeight: 80,
+    minHeight: 56,
     justifyContent: 'center',
     width: '100%',
   },
   buttonText: {
-    color: 'white',
     fontSize: 20,
     fontWeight: '600',
   },
   bottomContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 40,
-    paddingHorizontal: 20,
+    justifyContent: 'space-evenly',
+    marginTop: 20,
+    paddingHorizontal: 40,
   },
-  smallButton: {
-    backgroundColor: '#8E8E93',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    minWidth: 80,
-    minHeight: 44,
+  iconButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     alignItems: 'center',
-    flex: 1,
-    marginHorizontal: 5,
-  },
-  smallButtonText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '500',
+    justifyContent: 'center',
   },
 });

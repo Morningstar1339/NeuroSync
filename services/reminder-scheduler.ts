@@ -89,7 +89,7 @@ function calculateUpcomingTimes(baseDate: Date, hours: number, minutes: number, 
     }
     
     // Handle different repeat intervals
-    switch (repeatInterval.toLowerCase()) {
+    switch (repeatInterval?.toLowerCase() ?? 'daily') {
       case 'daily':
         times.push(new Date(notificationDate));
         break;
@@ -357,6 +357,215 @@ async function scheduleTimeBasedSleepReminders(reminderTime: string): Promise<vo
   
   console.log(`Scheduled time-based sleep reminders for ${reminderTime}`);
 }
+
+// Schedule activity reminder notifications
+export const scheduleActivityReminders = async (activityId?: number): Promise<void> => {
+  const db = await openDatabase();
+  
+  let query = 'SELECT * FROM schedules WHERE schedule_type = ? AND enabled = 1';
+  const params: any[] = ['activity'];
+  
+  if (activityId) {
+    query += ' AND activity_id = ?';
+    params.push(activityId);
+  }
+  
+  const schedules = await db.getAllAsync(query, params);
+  
+  if (schedules.length === 0) {
+    console.log('No active activity schedules found');
+    return;
+  }
+  
+  for (const schedule of schedules) {
+    const scheduleData = schedule as any;
+    
+    const activity = await db.getFirstAsync(
+      'SELECT * FROM activities WHERE id = ?',
+      [scheduleData.activity_id]
+    );
+    
+    if (!activity) continue;
+    
+    await cancelNotificationsByRelatedId('activity_reminder', scheduleData.activity_id);
+    
+    const time = scheduleData.time;
+    const [hours, minutes] = time.split(':').map(Number);
+    
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    let notificationDates: Date[] = [];
+    try {
+      const parsed = JSON.parse(scheduleData.days);
+      if (parsed && typeof parsed === 'object' && 'interval' in parsed) {
+        const interval = parsed.interval;
+        const startDateTimestamp = scheduleData.start_date;
+        let baseDate: Date;
+        
+        if (startDateTimestamp) {
+          baseDate = new Date(startDateTimestamp * 1000);
+          baseDate.setHours(hours, minutes, 0, 0);
+          console.log(`[scheduleActivityReminders] Using start_date: ${baseDate.toLocaleDateString()}, interval: ${interval}`);
+        } else {
+          baseDate = new Date(today);
+          baseDate.setHours(hours, minutes, 0, 0);
+          console.log(`[scheduleActivityReminders] No start_date, using today, interval: ${interval}`);
+        }
+        
+        for (let i = 0; i < 30; i++) {
+          const candidateDate = new Date(baseDate);
+          candidateDate.setDate(baseDate.getDate() + (i * interval));
+          if (candidateDate > now && candidateDate <= new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)) {
+            notificationDates.push(candidateDate);
+          }
+        }
+      } else {
+        const dayMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+        const days = parsed as string[];
+        for (let day = 0; day < 30; day++) {
+          const notificationDate = new Date(today);
+          notificationDate.setDate(today.getDate() + day);
+          notificationDate.setHours(hours, minutes, 0, 0);
+          const dayOfWeek = notificationDate.getDay();
+          const dayName = Object.keys(dayMap).find(k => dayMap[k] === dayOfWeek);
+          if (dayName && days.includes(dayName) && notificationDate > now) {
+            notificationDates.push(notificationDate);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[scheduleActivityReminders] Failed to parse days:', e);
+    }
+    
+    console.log(`[scheduleActivityReminders] Activity ${(activity as any).name}: ${notificationDates.length} notifications to schedule`);
+    
+    for (const notificationDate of notificationDates) {
+      const scheduledTimestamp = Math.floor(notificationDate.getTime() / 1000);
+      
+      console.log(`[scheduleActivityReminders] Scheduling for: ${notificationDate.toLocaleString()}, trigger in ${Math.round((scheduledTimestamp - Math.floor(Date.now()/1000)) / 60)} minutes`);
+      
+      const title = `Activity Reminder: ${(activity as any).name}`;
+      const body = `Log your ${(activity as any).name}`;
+      
+      const data = {
+        type: 'activity_reminder',
+        activityId: scheduleData.activity_id,
+        activityName: (activity as any).name,
+        defaultValue: (activity as any).default_value,
+        unit: (activity as any).unit,
+        iconId: (activity as any).icon_id,
+        color: (activity as any).color
+      };
+      
+      await scheduleNotification(
+        'activity_reminder',
+        scheduleData.activity_id,
+        scheduledTimestamp,
+        title,
+        body,
+        data
+      );
+    }
+  }
+  
+  console.log('Scheduled activity reminders');
+};
+
+// Schedule daily review reminder notifications
+export const scheduleDailyReviewReminders = async (): Promise<void> => {
+  const db = await openDatabase();
+  
+  const schedules = await db.getAllAsync(
+    'SELECT * FROM schedules WHERE schedule_type = ? AND enabled = 1',
+    ['daily_review']
+  );
+  
+  if (schedules.length === 0) {
+    console.log('No active daily review schedules found');
+    return;
+  }
+  
+  await cancelNotificationsByRelatedId('daily_review_reminder', 0);
+  
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  
+  for (const schedule of schedules) {
+    const scheduleData = schedule as any;
+    const time = scheduleData.time;
+    const [hours, minutes] = time.split(':').map(Number);
+    
+    let notificationDates: Date[] = [];
+    try {
+      const parsed = JSON.parse(scheduleData.days);
+      if (parsed && typeof parsed === 'object' && 'interval' in parsed) {
+        const interval = parsed.interval;
+        const startDateTimestamp = scheduleData.start_date;
+        let baseDate: Date;
+        
+        if (startDateTimestamp) {
+          baseDate = new Date(startDateTimestamp * 1000);
+          baseDate.setHours(hours, minutes, 0, 0);
+          console.log(`[scheduleDailyReviewReminders] Using start_date: ${baseDate.toLocaleDateString()}, interval: ${interval}`);
+        } else {
+          baseDate = new Date(today);
+          baseDate.setHours(hours, minutes, 0, 0);
+          console.log(`[scheduleDailyReviewReminders] No start_date, using today, interval: ${interval}`);
+        }
+        
+        for (let i = 0; i < 30; i++) {
+          const candidateDate = new Date(baseDate);
+          candidateDate.setDate(baseDate.getDate() + (i * interval));
+          if (candidateDate > now && candidateDate <= new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)) {
+            notificationDates.push(candidateDate);
+          }
+        }
+      } else {
+        const dayMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+        const days = parsed as string[];
+        for (let day = 0; day < 30; day++) {
+          const notificationDate = new Date(today);
+          notificationDate.setDate(today.getDate() + day);
+          notificationDate.setHours(hours, minutes, 0, 0);
+          const dayOfWeek = notificationDate.getDay();
+          const dayName = Object.keys(dayMap).find(k => dayMap[k] === dayOfWeek);
+          if (dayName && days.includes(dayName) && notificationDate > now) {
+            notificationDates.push(notificationDate);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[scheduleDailyReviewReminders] Failed to parse days:', e);
+    }
+    
+    console.log(`[scheduleDailyReviewReminders] ${notificationDates.length} notifications to schedule`);
+    
+    for (const notificationDate of notificationDates) {
+      const scheduledTimestamp = Math.floor(notificationDate.getTime() / 1000);
+      
+      console.log(`[scheduleDailyReviewReminders] Scheduling for: ${notificationDate.toLocaleString()}, trigger in ${Math.round((scheduledTimestamp - Math.floor(Date.now()/1000)) / 60)} minutes`);
+      
+      const title = 'Daily Review';
+      const body = 'Time to reflect on your day';
+      
+      const data = {
+        type: 'daily_review_reminder'
+      };
+      
+      await scheduleNotification(
+        'daily_review_reminder',
+        0,
+        scheduledTimestamp,
+        title,
+        body,
+        data
+      );
+    }
+  }
+  
+  console.log('Scheduled daily review reminders');
+};
 
 // Schedule duration-based sleep reminders (after last sleep)
 async function scheduleDurationBasedSleepReminders(hours: number): Promise<void> {

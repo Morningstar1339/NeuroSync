@@ -47,17 +47,26 @@ export interface DosageLimitParams {
 }
 
 export const getAllSupplements = async (): Promise<Supplement[]> => {
+  console.log('[getAllSupplements] Starting...');
   if (!isDatabaseInitialized()) {
+    console.log('[getAllSupplements] ERROR: Database not initialized');
     throw new Error('Database not initialized. Please wait for app to load completely.');
   }
   
   return await withDatabase(async (db) => {
+    console.log('[getAllSupplements] Querying database...');
     const result = await db.getAllAsync('SELECT * FROM supplements ORDER BY name');
-    return result.map((row: any) => ({
+    console.log('[getAllSupplements] Raw result count:', result.length);
+    if (result.length > 0) {
+      console.log('[getAllSupplements] First result:', JSON.stringify(result[0]));
+    }
+    const mapped = result.map((row: any) => ({
       ...row,
       schedule_enabled: Boolean(row.schedule_enabled),
       study_enabled: Boolean(row.study_enabled)
     })) as Supplement[];
+    console.log('[getAllSupplements] Returning', mapped.length, 'supplements');
+    return mapped;
   }, 'get all supplements');
 };
 

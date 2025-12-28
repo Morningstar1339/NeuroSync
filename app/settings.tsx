@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, TouchableOpacity, ScrollView, Alert, KeyboardAvoidingView, Platform, Dimensions, StatusBar } from 'react-native';
+import { StyleSheet, TouchableOpacity, ScrollView, Alert, KeyboardAvoidingView, Platform, Dimensions, StatusBar, Switch, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { sendDelayedTestNotification, getNotificationDebugInfo, listScheduledNotifications, getNotificationSettings, updateNotificationSettings, scheduleBedtimeReminder, cancelBedtimeReminder } from '@/database/notifications';
 
 const { height: screenHeight } = Dimensions.get('window');
 const isSmallScreen = screenHeight < 700;
@@ -28,10 +29,50 @@ export default function SettingsScreen() {
   const router = useRouter();
   const [settings, setSettings] = useState<SleepSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
+  const [bedtimeReminderEnabled, setBedtimeReminderEnabled] = useState(false);
 
   useEffect(() => {
     loadSettings();
+    loadBedtimeReminderSetting();
   }, []);
+
+  const loadBedtimeReminderSetting = async () => {
+    try {
+      const notifSettings = await getNotificationSettings();
+      setBedtimeReminderEnabled(notifSettings.bedtime_reminder_enabled);
+    } catch (error) {
+      console.error('Error loading bedtime reminder setting:', error);
+    }
+  };
+
+  const toggleBedtimeReminder = async (enabled: boolean) => {
+    try {
+      setBedtimeReminderEnabled(enabled);
+      
+      const hour24 = settings.bedtimeAmPm === 'PM' && settings.bedtimeHour !== 12
+        ? settings.bedtimeHour + 12
+        : settings.bedtimeAmPm === 'AM' && settings.bedtimeHour === 12
+        ? 0
+        : settings.bedtimeHour;
+      const timeString = `${hour24.toString().padStart(2, '0')}:${settings.bedtimeMinute.toString().padStart(2, '0')}`;
+      
+      await updateNotificationSettings({
+        bedtime_reminder_enabled: enabled,
+        bedtime_reminder_time: timeString
+      });
+      
+      if (enabled) {
+        await scheduleBedtimeReminder();
+        Alert.alert('Reminder Set', `You'll receive a bedtime reminder at ${formatBedtime()} daily.`);
+      } else {
+        await cancelBedtimeReminder();
+      }
+    } catch (error) {
+      console.error('Error toggling bedtime reminder:', error);
+      setBedtimeReminderEnabled(!enabled);
+      Alert.alert('Error', 'Failed to update reminder setting.');
+    }
+  };
 
   const loadSettings = async () => {
     try {
@@ -50,7 +91,20 @@ export default function SettingsScreen() {
     try {
       await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(newSettings));
       setSettings(newSettings);
-      Alert.alert('Settings Saved', 'Your bedtime has been updated for automatic sleep detection.');
+      
+      if (bedtimeReminderEnabled) {
+        const hour24 = newSettings.bedtimeAmPm === 'PM' && newSettings.bedtimeHour !== 12
+          ? newSettings.bedtimeHour + 12
+          : newSettings.bedtimeAmPm === 'AM' && newSettings.bedtimeHour === 12
+          ? 0
+          : newSettings.bedtimeHour;
+        const timeString = `${hour24.toString().padStart(2, '0')}:${newSettings.bedtimeMinute.toString().padStart(2, '0')}`;
+        
+        await updateNotificationSettings({ bedtime_reminder_time: timeString });
+        await scheduleBedtimeReminder();
+      }
+      
+      Alert.alert('Settings Saved', 'Your bedtime has been updated.');
     } catch (error) {
       console.error('Error saving settings:', error);
       Alert.alert('Error', 'Failed to save settings. Please try again.');
@@ -207,17 +261,90 @@ export default function SettingsScreen() {
               </ThemedView>
             </ThemedView>
 
+            <ThemedView style={styles.reminderSection}>
+              <View style={styles.reminderRow}>
+                <View style={styles.reminderTextContainer}>
+                  <ThemedText style={styles.reminderTitle}>Bedtime Reminder</ThemedText>
+                  <ThemedText style={styles.reminderSubtitle}>
+                    Get notified at your bedtime to log sleep tomorrow
+                  </ThemedText>
+                </View>
+                <Switch
+                  value={bedtimeReminderEnabled}
+                  onValueChange={toggleBedtimeReminder}
+                  trackColor={{ false: '#D1D1D6', true: '#34C759' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+            </ThemedView>
+
             <ThemedView style={styles.infoSection}>
-              <ThemedText style={styles.infoTitle}>How Sleep Detection Works</ThemedText>
+              <ThemedText style={styles.infoTitle}>How It Works</ThemedText>
               <ThemedText style={styles.infoText}>
-                • Sleep starts 10 minutes after phone use ends during your sleep window
+                • Enable the reminder above to get a daily notification at your bedtime
               </ThemedText>
               <ThemedText style={styles.infoText}>
-                • Sleep ends when you use your phone consistently (3+ uses in 30 min)
+                • When you wake up, open the app to log your sleep
               </ThemedText>
               <ThemedText style={styles.infoText}>
-                • Short interruptions (under 1 minute) are ignored
+                • Consistent logging helps identify sleep-cognition patterns
               </ThemedText>
+            </ThemedView>
+
+            {/* Notification Debug Section */}
+            <ThemedView style={styles.notifDebugSection}>
+              <ThemedText style={styles.notifDebugTitle}>Notification Debug</ThemedText>
+              
+              <TouchableOpacity
+                style={styles.notifTestButton}
+                onPress={async () => {
+                  const result = await sendDelayedTestNotification(10);
+                  Alert.alert(
+                    result.success ? 'Test Scheduled' : 'Failed',
+                    result.message
+                  );
+                }}
+              >
+                <ThemedText style={styles.notifTestButtonText}>Test Notification (10s)</ThemedText>
+                <ThemedText style={styles.notifTestButtonSubtext}>Sends a notification in 10 seconds</ThemedText>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[styles.notifTestButton, { marginTop: 8, backgroundColor: '#5856D6' }]}
+                onPress={async () => {
+                  try {
+                    const info = await getNotificationDebugInfo();
+                    const scheduled = await listScheduledNotifications();
+                    
+                    const channelInfo = info.channels.length > 0 
+                      ? info.channels.map(c => `${c.name} (${c.id}): importance ${c.importance}`).join('\n')
+                      : 'No channels (iOS)';
+                    
+                    const scheduledInfo = scheduled.length > 0
+                      ? scheduled.slice(0, 5).map(n => `• ${n.title}`).join('\n')
+                      : 'None';
+                    
+                    Alert.alert(
+                      'Notification Status',
+                      `Permission: ${info.permissionStatus}\n` +
+                      `Platform: ${info.platform}\n` +
+                      `Is Device: ${info.isDevice}\n` +
+                      `Scheduled: ${info.scheduledCount}\n\n` +
+                      `Channels:\n${channelInfo}\n\n` +
+                      `Settings:\n` +
+                      `• Enabled: ${info.settings.notifications_enabled}\n` +
+                      `• Supplements: ${info.settings.supplement_reminders_enabled}\n` +
+                      `• Sleep: ${info.settings.sleep_reminders_enabled}\n\n` +
+                      `Scheduled Notifications:\n${scheduledInfo}`
+                    );
+                  } catch (error) {
+                    Alert.alert('Error', String(error));
+                  }
+                }}
+              >
+                <ThemedText style={styles.notifTestButtonText}>Show Debug Info</ThemedText>
+                <ThemedText style={styles.notifTestButtonSubtext}>Permissions, channels, scheduled</ThemedText>
+              </TouchableOpacity>
             </ThemedView>
 
             {/* Database Debug Section */}
@@ -415,6 +542,34 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: '600',
   },
+  reminderSection: {
+    backgroundColor: '#E8F5E9',
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: '#81C784',
+  },
+  reminderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  reminderTextContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  reminderTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2E7D32',
+    marginBottom: 4,
+  },
+  reminderSubtitle: {
+    fontSize: 13,
+    color: '#558B2F',
+    lineHeight: 18,
+  },
   infoSection: {
     backgroundColor: '#F2F2F7',
     padding: 20,
@@ -436,6 +591,39 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     color: '#333',
     lineHeight: 20,
+  },
+  notifDebugSection: {
+    backgroundColor: '#E8F4FD',
+    padding: 20,
+    borderRadius: 12,
+    marginTop: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+  notifDebugTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+    color: '#0051A8',
+    textAlign: 'center',
+  },
+  notifTestButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  notifTestButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  notifTestButtonSubtext: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)',
   },
   debugSection: {
     backgroundColor: '#FFF3CD',

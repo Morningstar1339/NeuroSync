@@ -289,6 +289,86 @@ export const exportExclusions = async (): Promise<string> => {
   return arrayToCsv(exclusions, headers);
 };
 
+// Export activity logs with readable timestamps
+export const exportActivityLogs = async (options?: ExportOptions): Promise<string> => {
+  const db = await openDatabase();
+  
+  let query = `
+    SELECT 
+      al.id,
+      a.name as activity_name,
+      al.activity_id,
+      al.timestamp,
+      al.value,
+      a.unit,
+      al.notes
+    FROM activity_logs al
+    JOIN activities a ON al.activity_id = a.id
+  `;
+  
+  const params: any[] = [];
+  
+  if (options?.startDate || options?.endDate) {
+    const conditions = [];
+    if (options.startDate) {
+      conditions.push('al.timestamp >= ?');
+      params.push(Math.floor(options.startDate.getTime() / 1000));
+    }
+    if (options.endDate) {
+      conditions.push('al.timestamp <= ?');
+      params.push(Math.floor(options.endDate.getTime() / 1000));
+    }
+    query += ' WHERE ' + conditions.join(' AND ');
+  }
+  
+  query += ' ORDER BY al.timestamp DESC';
+  
+  const logs = await db.getAllAsync(query, params);
+  
+  const formattedLogs = logs.map((log: any) => ({
+    ...log,
+    timestamp_readable: formatTimestamp(log.timestamp),
+    date: formatDate(log.timestamp)
+  }));
+  
+  const headers = ['id', 'activity_name', 'activity_id', 'timestamp', 'timestamp_readable', 'date', 'value', 'unit', 'notes'];
+  return arrayToCsv(formattedLogs, headers);
+};
+
+// Export daily reviews with readable timestamps
+export const exportDailyReviews = async (options?: ExportOptions): Promise<string> => {
+  const db = await openDatabase();
+  
+  let query = 'SELECT * FROM daily_reviews';
+  const params: any[] = [];
+  
+  if (options?.startDate || options?.endDate) {
+    const conditions = [];
+    if (options.startDate) {
+      conditions.push('timestamp >= ?');
+      params.push(Math.floor(options.startDate.getTime() / 1000));
+    }
+    if (options.endDate) {
+      conditions.push('timestamp <= ?');
+      params.push(Math.floor(options.endDate.getTime() / 1000));
+    }
+    query += ' WHERE ' + conditions.join(' AND ');
+  }
+  
+  query += ' ORDER BY timestamp DESC';
+  
+  const reviews = await db.getAllAsync(query, params);
+  
+  const formattedReviews = reviews.map((review: any) => ({
+    ...review,
+    timestamp_readable: formatTimestamp(review.timestamp),
+    date: formatDate(review.timestamp)
+  }));
+  
+  const headers = ['id', 'timestamp', 'timestamp_readable', 'date', 'social_did', 'social_wished', 'social_ratings', 'productivity_did', 'productivity_wished', 'productivity_ratings', 'wellness', 'news_types'];
+  return arrayToCsv(formattedReviews, headers);
+};
+
 // Export study protocols
 export const exportStudyProtocols = async (): Promise<string> => {
   const db = await openDatabase();
@@ -328,6 +408,8 @@ export const exportAllData = async (options?: ExportOptions): Promise<{[key: str
   exports.symptom_logs = await exportSymptomLogs(options);
   exports.cognitive_test_results = await exportCognitiveTestResults(options);
   exports.sleep_logs = await exportSleepLogs(options);
+  exports.activity_logs = await exportActivityLogs(options);
+  exports.daily_reviews = await exportDailyReviews(options);
   
   return exports;
 };
@@ -345,6 +427,8 @@ export const getExportStats = async (): Promise<{[key: string]: number}> => {
     { name: 'symptom_logs', query: 'SELECT COUNT(*) as count FROM symptom_logs' },
     { name: 'cognitive_test_results', query: 'SELECT COUNT(*) as count FROM cognitive_test_results' },
     { name: 'sleep_logs', query: 'SELECT COUNT(*) as count FROM sleep_logs' },
+    { name: 'activity_logs', query: 'SELECT COUNT(*) as count FROM activity_logs' },
+    { name: 'daily_reviews', query: 'SELECT COUNT(*) as count FROM daily_reviews' },
     { name: 'schedules', query: 'SELECT COUNT(*) as count FROM schedules' },
     { name: 'exclusions', query: 'SELECT COUNT(*) as count FROM exclusions' },
     { name: 'study_protocols', query: 'SELECT COUNT(*) as count FROM study_protocols' }

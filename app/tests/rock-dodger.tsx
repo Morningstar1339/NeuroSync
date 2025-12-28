@@ -8,19 +8,25 @@ import { useThemeColor } from '@/hooks/use-theme-color';
 import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Ionicons } from '@expo/vector-icons';
 import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
+import { useHierarchicalBack } from '@/hooks/use-hierarchical-back';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const PLAYER_SIZE = 40;
-const ROCK_SIZE = 50; // Renamed and made larger for visibility
-const OBSTACLE_SPEED_BASE = 3; // Increased speed for more noticeable movement
-const OBSTACLE_SPAWN_RATE_BASE = 800; // Faster spawning
+const ROCK_SIZE = 50;
+const OBSTACLE_SPEED_BASE = 3;
+const OBSTACLE_SPAWN_RATE_BASE = 800;
+const JOYSTICK_SIZE = 120;
+const JOYSTICK_KNOB_SIZE = 50;
+const PLAYER_SPEED = 5;
 
 interface Obstacle {
   id: number;
   x: number;
   y: number;
-  speed: number;
+  vx: number;
+  vy: number;
 }
 
 export default function RockDodgerTestScreen() {
@@ -30,18 +36,19 @@ export default function RockDodgerTestScreen() {
   const tintColor = useThemeColor({}, 'tint');
   const insets = useSafeAreaInsets();
   
+  useHierarchicalBack('tests/rock-dodger');
+  
   const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
   const gameStateRef = useRef<'ready' | 'playing' | 'finished'>('ready');
 
-	useEffect(() => {
-	  gameStateRef.current = gameState;
-	}, [gameState]);
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
 
   const [survivalTime, setSurvivalTime] = useState(0);
-  const [dodgeCount, setDodgeCount] = useState(0);
-  const [difficultyLevel, setDifficultyLevel] = useState(1);
+  const difficultyLevelRef = useRef(1);
   const [obstacles, setObstacles] = useState<Obstacle[]>([]);
-  const [rocksSpawned, setRocksSpawned] = useState(0); // Debug counter
+  const [, setRocksSpawned] = useState(0);
   const [scheduledTest, setScheduledTest] = useState<any>(null);
   const [studyContext, setStudyContext] = useState<any>(null);
   const [activeTestSession, setActiveTestSession] = useState<any>(null);
@@ -51,121 +58,147 @@ export default function RockDodgerTestScreen() {
   const spawnTimer = useRef<number | null>(null);
   const obstacleIdCounter = useRef(0);
   const startTime = useRef<number>(0);
-  const totalDodgeDistance = useRef<number>(0);
+  
+  const velocityX = useSharedValue(0);
+  const velocityY = useSharedValue(0);
+  const joystickOffsetX = useSharedValue(0);
+  const joystickOffsetY = useSharedValue(0);
 
-  // Calculate safe game area dimensions
-  const gameAreaHeight = screenHeight - insets.top - insets.bottom - 140; // 140px for header
-  const playerY = insets.top + 140 + gameAreaHeight * 0.87; // Lowered player position to 87%
+  const gameAreaTop = insets.top + 140;
+  const gameAreaHeight = screenHeight - insets.top - insets.bottom - 140 - JOYSTICK_SIZE - 40;
+  const defaultPlayerY = gameAreaTop + gameAreaHeight * 0.5;
+  const playerY = useSharedValue(defaultPlayerY);
+  
 
   const generateObstacle = (): Obstacle => {
     obstacleIdCounter.current++;
-    const rockX = Math.random() * (screenWidth - ROCK_SIZE);
-    const rockY = insets.top + 140 - ROCK_SIZE; // Start above visible area
-    const rockSpeed = OBSTACLE_SPEED_BASE + (difficultyLevel - 1) * 0.5;
     
-    console.log('🪨 Spawning rock:', {
-      id: obstacleIdCounter.current,
-      x: rockX,
-      y: rockY,
-      speed: rockSpeed,
-      screenWidth,
-      rockSize: ROCK_SIZE
-    });
+    const playerCenterX = playerX.value + PLAYER_SIZE / 2;
+    const playerCenterY = playerY.value + PLAYER_SIZE / 2;
+    
+    let spawnX = (playerCenterX + screenWidth / 2) % screenWidth;
+    let spawnY = gameAreaTop + ((playerCenterY - gameAreaTop + gameAreaHeight / 2) % gameAreaHeight);
+    
+    spawnX += (Math.random() - 0.5) * 60;
+    spawnY += (Math.random() - 0.5) * 60;
+    
+    spawnX = ((spawnX % screenWidth) + screenWidth) % screenWidth;
+    spawnY = gameAreaTop + (((spawnY - gameAreaTop) % gameAreaHeight) + gameAreaHeight) % gameAreaHeight;
+    
+    spawnX -= ROCK_SIZE / 2;
+    spawnY -= ROCK_SIZE / 2;
+    
+    const rockSpeed = OBSTACLE_SPEED_BASE + (difficultyLevelRef.current - 1) * 0.5;
+    
+    const angle = Math.random() * Math.PI * 2;
+    const vx = Math.cos(angle) * rockSpeed;
+    const vy = Math.sin(angle) * rockSpeed;
     
     return {
       id: obstacleIdCounter.current,
-      x: rockX,
-      y: rockY,
-      speed: rockSpeed,
+      x: spawnX,
+      y: spawnY,
+      vx,
+      vy,
     };
   };
 
-  const checkCollision = (playerX: number, obstacle: Obstacle): boolean => {
-    const playerLeft = playerX;
-    const playerRight = playerX + PLAYER_SIZE;
-    const playerTop = playerY;
-    const playerBottom = playerY + PLAYER_SIZE;
+  const checkCollision = (playerXVal: number, playerYVal: number, obstacle: Obstacle): boolean => {
+    const playerCenterX = playerXVal + PLAYER_SIZE / 2;
+    const playerCenterY = playerYVal + PLAYER_SIZE / 2;
+    const obstacleCenterX = obstacle.x + ROCK_SIZE / 2;
+    const obstacleCenterY = obstacle.y + ROCK_SIZE / 2;
     
-    const obstacleLeft = obstacle.x;
-    const obstacleRight = obstacle.x + ROCK_SIZE;
-    const obstacleTop = obstacle.y;
-    const obstacleBottom = obstacle.y + ROCK_SIZE;
+    const dx = playerCenterX - obstacleCenterX;
+    const dy = playerCenterY - obstacleCenterY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const collisionDistance = (PLAYER_SIZE / 2) + (ROCK_SIZE / 2);
     
-    return playerLeft < obstacleRight && 
-           playerRight > obstacleLeft && 
-           playerTop < obstacleBottom && 
-           playerBottom > obstacleTop;
+    return distance < collisionDistance;
   };
 
-const updateGame = () => {
-  if (gameStateRef.current !== 'playing') return;
+  const updateGame = () => {
+    if (gameStateRef.current !== 'playing') return;
 
-    
     const currentTime = Date.now();
     const survival = (currentTime - startTime.current) / 1000;
     setSurvivalTime(survival);
     
+    let newX = playerX.value + velocityX.value;
+    let newY = playerY.value + velocityY.value;
+    
+    const wrapWidth = screenWidth;
+    const wrapHeight = gameAreaHeight;
+    
+    if (newX < -PLAYER_SIZE) {
+      newX = wrapWidth;
+    } else if (newX > wrapWidth) {
+      newX = -PLAYER_SIZE;
+    }
+    
+    if (newY < gameAreaTop - PLAYER_SIZE) {
+      newY = gameAreaTop + wrapHeight;
+    } else if (newY > gameAreaTop + wrapHeight) {
+      newY = gameAreaTop - PLAYER_SIZE;
+    }
+    
+    playerX.value = newX;
+    playerY.value = newY;
+    
     setObstacles(prevObstacles => {
-      const newObstacles = prevObstacles
-        .map(obstacle => ({
+      const currentPlayerX = playerX.value;
+      const currentPlayerY = playerY.value;
+      
+      const newObstacles = prevObstacles.map(obstacle => {
+        let newRockX = obstacle.x + obstacle.vx;
+        let newRockY = obstacle.y + obstacle.vy;
+        
+        if (newRockX < -ROCK_SIZE) {
+          newRockX = screenWidth;
+        } else if (newRockX > screenWidth) {
+          newRockX = -ROCK_SIZE;
+        }
+        
+        if (newRockY < gameAreaTop - ROCK_SIZE) {
+          newRockY = gameAreaTop + gameAreaHeight;
+        } else if (newRockY > gameAreaTop + gameAreaHeight) {
+          newRockY = gameAreaTop - ROCK_SIZE;
+        }
+        
+        return {
           ...obstacle,
-          y: obstacle.y + obstacle.speed
-        }))
-        .filter(obstacle => obstacle.y < screenHeight - insets.bottom);
+          x: newRockX,
+          y: newRockY
+        };
+      });
       
       for (const obstacle of newObstacles) {
-        if (checkCollision(playerX.value, obstacle)) {
+        if (checkCollision(currentPlayerX, currentPlayerY, obstacle)) {
           runOnJS(endGame)();
           return newObstacles;
         }
       }
       
-      const passedObstacles = prevObstacles.filter(
-        obstacle => obstacle.y > playerY + PLAYER_SIZE && 
-        (newObstacles.find(newObs => newObs.id === obstacle.id)?.y || 0) <= playerY + PLAYER_SIZE
-      );
-      
-      if (passedObstacles.length > 0) {
-        runOnJS(setDodgeCount)(prev => prev + passedObstacles.length);
-        
-        const currentPlayerX = playerX.value;
-        passedObstacles.forEach(obstacle => {
-          const dodgeDistance = Math.abs(currentPlayerX + PLAYER_SIZE/2 - obstacle.x - ROCK_SIZE/2);
-          totalDodgeDistance.current += dodgeDistance;
-        });
-      }
-      
       const newDifficultyLevel = Math.floor(survival / 10) + 1;
-      if (newDifficultyLevel !== difficultyLevel) {
-        runOnJS(setDifficultyLevel)(newDifficultyLevel);
+      if (newDifficultyLevel !== difficultyLevelRef.current) {
+        difficultyLevelRef.current = newDifficultyLevel;
       }
       
       return newObstacles;
     });
   };
 
-	const spawnObstacle = () => {
-	  if (gameStateRef.current !== 'playing') {
-		console.log('⚠️ Not spawning rock - game state:', gameStateRef.current);
-		return;
-	  }
+  const spawnObstacle = () => {
+    if (gameStateRef.current !== 'playing') {
+      return;
+    }
 
     const newRock = generateObstacle();
-    setObstacles(prev => {
-      const newObstacles = [...prev, newRock];
-      console.log('📊 Current rocks count:', newObstacles.length);
-      console.log('📊 Rock velocities:', newObstacles.map(r => `${r.id}:${r.speed}`));
-      return newObstacles;
-    });
+    setObstacles(prev => [...prev, newRock]);
     
-    setRocksSpawned(prev => {
-      const newCount = prev + 1;
-      console.log('🔢 Total rocks spawned:', newCount);
-      return newCount;
-    });
+    setRocksSpawned(prev => prev + 1);
     
-    const spawnRate = Math.max(300, OBSTACLE_SPAWN_RATE_BASE - (difficultyLevel - 1) * 100);
-    console.log('⏰ Next rock in:', spawnRate + 'ms');
+    const spawnRate = Math.max(300, OBSTACLE_SPAWN_RATE_BASE - (difficultyLevelRef.current - 1) * 100);
     spawnTimer.current = setTimeout(spawnObstacle, spawnRate) as any;
   };
 
@@ -193,21 +226,19 @@ const updateGame = () => {
   const startGameNow = () => {
     setGameState('playing');
     setSurvivalTime(0);
-    setDodgeCount(0);
-    setDifficultyLevel(1);
+    difficultyLevelRef.current = 1;
     setObstacles([]);
     setRocksSpawned(0);
     playerX.value = screenWidth / 2 - PLAYER_SIZE / 2;
+    playerY.value = defaultPlayerY;
     startTime.current = Date.now();
-    totalDodgeDistance.current = 0;
-    
-    console.log('🎮 Game started! Screen dimensions:', { screenWidth, screenHeight });
-    console.log('🎮 Game area height:', gameAreaHeight);
-    console.log('🎮 Player Y position:', playerY);
+    velocityX.value = 0;
+    velocityY.value = 0;
+    joystickOffsetX.value = 0;
+    joystickOffsetY.value = 0;
     
     gameTimer.current = setInterval(updateGame, 16) as any;
-    // Start spawning rocks immediately
-    setTimeout(spawnObstacle, 500) as any; // First rock after 500ms
+    setTimeout(spawnObstacle, 500) as any;
   };
 
   const endGame = async () => {
@@ -219,26 +250,20 @@ const updateGame = () => {
       clearTimeout(spawnTimer.current);
     }
     
-    const finalSurvivalTime = survivalTime;
-    const averageDodgeDistance = dodgeCount > 0 ? totalDodgeDistance.current / dodgeCount : 0;
-    
-    const accuracy = finalSurvivalTime > 0 ? Math.min(1, finalSurvivalTime / 60) : 0;
-    const speed = finalSurvivalTime;
+    const calculatedTime = (Date.now() - startTime.current) / 1000;
+    const finalSurvivalTime = Math.max(0.001, calculatedTime);
+    setSurvivalTime(finalSurvivalTime);
     
     const rawData = {
-      survivalTime: finalSurvivalTime,
-      dodgeCount,
-      averageDodgeDistance,
-      difficultyLevel,
-      accuracy,
-      speed
+      survivalTime: finalSurvivalTime
     };
     
     try {
       const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
       const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
       
-      await saveCognitiveTestResult('rock_dodger', Math.floor(finalSurvivalTime), rawData, finalSurvivalTime, studyId, supplementLogId, accuracy, speed);
+      const score = Math.round(finalSurvivalTime * 4);
+      await saveCognitiveTestResult('rock_dodger', score, rawData, finalSurvivalTime, studyId, supplementLogId);
       
       if (scheduledTest) {
         await completeScheduledTest(scheduledTest.id);
@@ -248,33 +273,99 @@ const updateGame = () => {
     }
   };
 
-	const panGesture = Gesture.Pan()
-	  .onUpdate((event) => {
-		// Allow the player to move horizontally whenever the user drags.
-		const newX = Math.max(
-		  0,
-		  Math.min(screenWidth - PLAYER_SIZE, event.absoluteX - PLAYER_SIZE / 2)
-		);
-		playerX.value = newX;
-	  });
+  const joystickGesture = Gesture.Pan()
+    .onStart(() => {
+      joystickOffsetX.value = 0;
+      joystickOffsetY.value = 0;
+    })
+    .onUpdate((event) => {
+      const maxOffset = (JOYSTICK_SIZE - JOYSTICK_KNOB_SIZE) / 2;
+      
+      let offsetX = event.translationX;
+      let offsetY = event.translationY;
+      
+      const dist = Math.sqrt(offsetX * offsetX + offsetY * offsetY);
+      if (dist > maxOffset) {
+        offsetX = (offsetX / dist) * maxOffset;
+        offsetY = (offsetY / dist) * maxOffset;
+      }
+      
+      joystickOffsetX.value = offsetX;
+      joystickOffsetY.value = offsetY;
+      
+      const normalizedX = offsetX / maxOffset;
+      const normalizedY = offsetY / maxOffset;
+      
+      velocityX.value = normalizedX * PLAYER_SPEED;
+      velocityY.value = normalizedY * PLAYER_SPEED;
+    })
+    .onEnd(() => {
+      joystickOffsetX.value = 0;
+      joystickOffsetY.value = 0;
+      velocityX.value = 0;
+      velocityY.value = 0;
+    });
+
+  const joystickKnobStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        { translateX: joystickOffsetX.value },
+        { translateY: joystickOffsetY.value }
+      ],
+    };
+  });
 
   const playerAnimatedStyle = useAnimatedStyle(() => {
     return {
-      transform: [{ translateX: playerX.value }],
+      transform: [
+        { translateX: playerX.value },
+        { translateY: playerY.value - gameAreaTop }
+      ],
     };
   });
 
   const handleBackToMenu = () => {
-    if (params.sequence === 'all-seven') {
+    if (params.sequence === 'all-nine') {
       router.push('/tests/all-nine');
     } else {
       router.push('/cognitive-tests');
     }
   };
 
+  const handleAbortTest = () => {
+    if (gameState === 'playing') {
+      Alert.alert(
+        'Exit Test?',
+        'Your progress will not be saved.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Exit',
+            style: 'destructive',
+            onPress: () => {
+              gameStateRef.current = 'ready';
+              setGameState('ready');
+              if (gameTimer.current) {
+                clearInterval(gameTimer.current);
+                gameTimer.current = null;
+              }
+              if (spawnTimer.current) {
+                clearTimeout(spawnTimer.current);
+                spawnTimer.current = null;
+              }
+              handleBackToMenu();
+            },
+          },
+        ]
+      );
+    } else {
+      handleBackToMenu();
+    }
+  };
+
   const handleNextTestOrFinish = () => {
-    if (params.sequence === 'all-seven') {
-      router.push('/tests/pattern-matcher?sequence=all-seven');
+    if (params.sequence === 'all-nine') {
+      router.push('/tests/pattern-matcher?sequence=all-nine');
     } else {
       router.push('/cognitive-tests');
     }
@@ -320,6 +411,13 @@ const updateGame = () => {
       <ThemedView style={styles.container} safeArea>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.instructionsContainer}>
+            {params.sequence === 'all-nine' && (
+              <ThemedView style={[styles.progressBanner, { backgroundColor: tintColor + '15', borderColor: tintColor }]}>
+                <ThemedText style={[styles.progressText, { color: tintColor }]}>
+                  Test 5 of 9
+                </ThemedText>
+              </ThemedView>
+            )}
             <ThemedText type="title" style={styles.title}>Rock Dodger</ThemedText>
             {scheduledTest && studyContext?.supplement_name && (
               <ThemedView style={[styles.studyBanner, { backgroundColor: tintColor + '20', borderColor: tintColor }]}>
@@ -336,10 +434,10 @@ const updateGame = () => {
               </ThemedView>
             )}
             <ThemedText style={styles.instructions}>
-              Move the red circle to dodge falling blue circles!{'\n\n'}
-              • Drag left/right to move{'\n'}
-              • Avoid all blue obstacles{'\n'}
-              • Game ends when you hit an obstacle{'\n'}
+              Dodge the rocks using the joystick!{'\n\n'}
+              • Use the joystick at the bottom to move{'\n'}
+              • Rocks spawn far away with random trajectories{'\n'}
+              • Game ends when you hit a rock{'\n'}
               • Difficulty increases over time
             </ThemedText>
             <TouchableOpacity 
@@ -364,18 +462,12 @@ const updateGame = () => {
           <ThemedView style={styles.resultsContainer}>
             <ThemedText type="title" style={styles.title}>Test Complete!</ThemedText>
             <ThemedText style={styles.finalScore}>Survival Time: {survivalTime.toFixed(1)}s</ThemedText>
-            <ThemedText style={styles.metricText}>Accuracy: {(Math.min(1, survivalTime / 60) * 100).toFixed(1)}% | Speed: {survivalTime.toFixed(1)}s</ThemedText>
-            <ThemedText style={styles.metricText}>Dodges: {dodgeCount}</ThemedText>
-            <ThemedText style={styles.metricText}>Difficulty Reached: Level {difficultyLevel}</ThemedText>
-            <ThemedText style={styles.metricText}>
-              Avg Dodge Distance: {dodgeCount > 0 ? (totalDodgeDistance.current / dodgeCount).toFixed(1) : '0'}px
-            </ThemedText>
             <ThemedText style={styles.resultMessage}>
               {survivalTime >= 30 ? 'Excellent reflexes!' : 
                survivalTime >= 20 ? 'Good performance!' : 
                survivalTime >= 10 ? 'Not bad!' : 'Keep practicing!'}
             </ThemedText>
-            {params.sequence === 'all-seven' ? (
+            {params.sequence === 'all-nine' ? (
               <>
                 <TouchableOpacity 
                   style={[styles.startButton, { backgroundColor: tintColor }]} 
@@ -409,43 +501,53 @@ const updateGame = () => {
   return (
     <ThemedView style={styles.container} safeArea>
       <GestureHandlerRootView style={styles.gameContainer}>
-        <GestureDetector gesture={panGesture}>
-          <ThemedView style={styles.gameContainer}>
-            <ThemedView style={styles.gameHeader}>
-              <ThemedText style={styles.timer}>Time: {survivalTime.toFixed(1)}s</ThemedText>
-              <ThemedText style={styles.scoreText}>Dodges: {dodgeCount}</ThemedText>
-              <ThemedText style={styles.levelText}>Level: {difficultyLevel}</ThemedText>
-              <ThemedText style={styles.debugText}>Rocks: {obstacles.length}/{rocksSpawned}</ThemedText>
-            </ThemedView>
-            
-            <View style={styles.gameArea}>
-              <Animated.View
-                style={[
-                  styles.player,
-                  { backgroundColor: '#FF3B30', top: playerY - insets.top - 140 },
-                  playerAnimatedStyle
-                ]}
-              />
-              
-              {obstacles.map(obstacle => (
-                <View
-                  key={obstacle.id}
-                  style={[
-                    styles.obstacle,
-                    {
-                      backgroundColor: '#2196F3', // Fixed blue color for rocks
-                      left: obstacle.x,
-                      top: obstacle.y - insets.top - 140,
-                      width: ROCK_SIZE,
-                      height: ROCK_SIZE,
-                      borderRadius: ROCK_SIZE / 2,
-                    }
-                  ]}
-                />
-              ))}
+        <ThemedView style={[styles.infoBanner, { borderColor: tintColor }]}>
+          <TouchableOpacity
+            style={styles.bannerBackButton}
+            onPress={handleAbortTest}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="arrow-back" size={20} color={tintColor} />
+          </TouchableOpacity>
+          <View style={styles.bannerStats}>
+            <ThemedText style={styles.bannerStatText}>Time: {survivalTime.toFixed(1)}s</ThemedText>
+          </View>
+        </ThemedView>
+        
+        <View style={[styles.gameArea, { height: gameAreaHeight }]}>
+          <Animated.View
+            style={[
+              styles.player,
+              { backgroundColor: '#FF3B30', top: 0 },
+              playerAnimatedStyle
+            ]}
+          />
+          
+          {obstacles.map(obstacle => (
+            <View
+              key={obstacle.id}
+              style={[
+                styles.obstacle,
+                {
+                  backgroundColor: '#2196F3',
+                  left: obstacle.x,
+                  top: obstacle.y - gameAreaTop,
+                  width: ROCK_SIZE,
+                  height: ROCK_SIZE,
+                  borderRadius: ROCK_SIZE / 2,
+                }
+              ]}
+            />
+          ))}
+        </View>
+        
+        <View style={styles.joystickContainer}>
+          <GestureDetector gesture={joystickGesture}>
+            <View style={styles.joystickBase}>
+              <Animated.View style={[styles.joystickKnob, joystickKnobStyle]} />
             </View>
-          </ThemedView>
-        </GestureDetector>
+          </GestureDetector>
+        </View>
       </GestureHandlerRootView>
     </ThemedView>
   );
@@ -509,14 +611,31 @@ const styles = StyleSheet.create({
   },
   gameContainer: {
     flex: 1,
-  },
-  gameHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
     paddingTop: 20,
-    paddingBottom: 20,
-    height: 60,
+  },
+  infoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginBottom: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.03)',
+  },
+  bannerBackButton: {
+    padding: 4,
+    marginRight: 12,
+  },
+  bannerStats: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  bannerStatText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   timer: {
     fontSize: 16,
@@ -533,6 +652,7 @@ const styles = StyleSheet.create({
   gameArea: {
     flex: 1,
     position: 'relative',
+    overflow: 'hidden',
   },
   player: {
     position: 'absolute',
@@ -553,10 +673,27 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
   },
-  debugText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#666',
+  joystickContainer: {
+    height: JOYSTICK_SIZE + 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 20,
+  },
+  joystickBase: {
+    width: JOYSTICK_SIZE,
+    height: JOYSTICK_SIZE,
+    borderRadius: JOYSTICK_SIZE / 2,
+    backgroundColor: 'rgba(150, 150, 150, 0.3)',
+    borderWidth: 2,
+    borderColor: 'rgba(150, 150, 150, 0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  joystickKnob: {
+    width: JOYSTICK_KNOB_SIZE,
+    height: JOYSTICK_KNOB_SIZE,
+    borderRadius: JOYSTICK_KNOB_SIZE / 2,
+    backgroundColor: 'rgba(100, 100, 100, 0.8)',
   },
   finalScore: {
     fontSize: 26,
@@ -601,6 +738,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   warningText: {
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  progressBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 15,
+    alignItems: 'center',
+  },
+  progressText: {
     fontSize: 14,
     fontWeight: '600',
     textAlign: 'center',

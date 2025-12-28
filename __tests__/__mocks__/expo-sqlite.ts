@@ -120,6 +120,18 @@ const initializeTables = (database: Database.Database) => {
       sleep_reminder_time TEXT,
       sleep_reminder_hours INTEGER DEFAULT 16
     );
+
+    CREATE TABLE IF NOT EXISTS schedules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_type TEXT NOT NULL CHECK (schedule_type IN ('supplement', 'cognitive_test')),
+      supplement_id INTEGER,
+      test_type TEXT,
+      time TEXT NOT NULL,
+      days TEXT NOT NULL,
+      enabled INTEGER DEFAULT 1,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      FOREIGN KEY (supplement_id) REFERENCES supplements(id) ON DELETE CASCADE
+    );
   `);
 };
 

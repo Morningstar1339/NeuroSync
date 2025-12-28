@@ -3,27 +3,23 @@ import { StyleSheet, TouchableOpacity, Alert, View, Modal, TextInput, Platform, 
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { logSupplement, Supplement, isExclusionActive } from '@/database/supplements';
-import { scheduleEventBasedTests } from '@/database/study-scheduler';
-import { scheduleEventBasedStudyNotifications } from '@/services/reminder-scheduler';
+import { logActivity, Activity } from '@/database/activities';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useHierarchicalBack } from '@/hooks/use-hierarchical-back';
 
-export default function LogSupplementScreen() {
+export default function LogActivityScreen() {
   const [isLogged, setIsLogged] = useState(false);
   const [isLogging, setIsLogging] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editDosage, setEditDosage] = useState('');
+  const [editValue, setEditValue] = useState('');
   const [editTimestamp, setEditTimestamp] = useState(new Date());
   const [showDateTimePicker, setShowDateTimePicker] = useState(false);
   const [pendingPickerOpen, setPendingPickerOpen] = useState(false);
   const [tempTimestamp, setTempTimestamp] = useState(new Date());
   const [androidPickerMode, setAndroidPickerMode] = useState<'date' | 'time' | null>(null);
   const [androidTempDate, setAndroidTempDate] = useState(new Date());
-  const [isCheckingExclusion, setIsCheckingExclusion] = useState(true);
-  const [exclusionWarning, setExclusionWarning] = useState<string | null>(null);
   
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
@@ -31,111 +27,61 @@ export default function LogSupplementScreen() {
   const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
   
-  useHierarchicalBack('log-supplement');
+  useHierarchicalBack('log-activity');
 
-  // Determine if we have all the required params
   const hasValidParams =
     !!params &&
     !!params.id &&
     !!params.name &&
-    !!params.default_dosage &&
-    !!params.dosage_unit;
+    !!params.default_value &&
+    !!params.unit;
 
-  const supplement: Supplement = useMemo(() => ({
+  const activity: Activity = useMemo(() => ({
     id: Number(params.id) || 0,
     name: (params.name as string) || 'Unknown',
-    default_dosage: Number(params.default_dosage) || 0,
-    dosage_unit: (params.dosage_unit as string) || 'mg',
-    icon_id: (params.icon_id as string) || 'medical',
-    schedule_enabled: params.schedule_enabled === 'true',
-    study_enabled: params.study_enabled === 'true'
-  }), [params.id, params.name, params.default_dosage, params.dosage_unit, params.icon_id, params.schedule_enabled, params.study_enabled]);
+    default_value: Number(params.default_value) || 0,
+    unit: (params.unit as string) || 'unit',
+    icon_id: (params.icon_id as string) || 'fitness',
+    color: (params.color as string) || '#007AFF'
+  }), [params.id, params.name, params.default_value, params.unit, params.icon_id, params.color]);
 
-  const logSupplementEntry = useCallback(async (customDosage?: number, customTimestamp?: Date, wasOverridden?: boolean) => {
+  const logActivityEntry = useCallback(async (customValue?: number, customTimestamp?: Date) => {
     if (isLogged || isLogging) return;
     
-    const dosageToUse = customDosage || supplement.default_dosage;
+    const valueToUse = customValue || activity.default_value;
     
-    if (!supplement || !supplement.id || dosageToUse <= 0) {
-      Alert.alert('Error', 'Invalid supplement data. Please try again.');
+    if (!activity || !activity.id || valueToUse <= 0) {
+      Alert.alert('Error', 'Invalid activity data. Please try again.');
       router.back();
       return;
     }
     
     setIsLogging(true);
     try {
-      let notes = wasOverridden ? 'Override exclusion warning' : undefined;
-      if (customDosage && customDosage !== supplement.default_dosage) {
-        notes = notes ? `${notes} - Custom dosage: ${customDosage}${supplement.dosage_unit}` : `Custom dosage: ${customDosage}${supplement.dosage_unit}`;
-      }
       const timestampSeconds = customTimestamp ? Math.floor(customTimestamp.getTime() / 1000) : undefined;
-      const logId = await logSupplement(supplement.id, dosageToUse, notes, timestampSeconds);
-      
-      // Schedule event-based tests for this supplement
-      try {
-        await scheduleEventBasedTests(supplement.id, logId);
-      } catch (scheduleError) {
-        console.error('Failed to schedule tests:', scheduleError);
-        // Don't fail the logging if scheduling fails
-      }
-      
-      // Schedule event-based study notifications
-      try {
-        await scheduleEventBasedStudyNotifications(supplement.id, logId);
-      } catch (notificationError) {
-        console.error('Failed to schedule study notifications:', notificationError);
-        // Don't fail the logging if notification scheduling fails
-      }
+      await logActivity(activity.id, valueToUse, undefined, timestampSeconds);
       
       setIsLogged(true);
       
-      // Show brief confirmation then navigate back
       setTimeout(() => {
         router.back();
       }, 1500);
     } catch (error) {
-      console.error('Failed to log supplement:', error);
-      Alert.alert('Error', 'Failed to log supplement. Please try again.');
+      console.error('Failed to log activity:', error);
+      Alert.alert('Error', 'Failed to log activity. Please try again.');
       router.back();
     } finally {
       setIsLogging(false);
     }
-  }, [isLogged, isLogging, supplement, router]);
+  }, [isLogged, isLogging, activity, router]);
 
-  // Check exclusion immediately when screen loads
-  useEffect(() => {
-    if (!hasValidParams || !isCheckingExclusion) return;
-
-    const checkExclusion = async () => {
-      try {
-        const exclusionCheck = await isExclusionActive(supplement.id, supplement.default_dosage);
-        if (exclusionCheck.active) {
-          setExclusionWarning(exclusionCheck.reason || 'Dose limit warning');
-        }
-        setIsCheckingExclusion(false);
-      } catch (error) {
-        console.error('Failed to check exclusions:', error);
-        setIsCheckingExclusion(false);
-      }
-    };
-
-    checkExclusion();
-  }, [hasValidParams, isCheckingExclusion, supplement.id, supplement.default_dosage]);
-
-  const handleCancelWarning = () => {
-    router.back();
-  };
-
-
-  // Always call hooks; handle invalid params inside the effect
   useEffect(() => {
     if (!hasValidParams) {
-      Alert.alert('Error', 'Missing supplement data. Please try again.');
+      Alert.alert('Error', 'Missing activity data. Please try again.');
       router.back();
     }
   }, [hasValidParams, router]);
 
-  // Cleanup timer when component unmounts or navigates away
   useEffect(() => {
     return () => {
       if (timerRef.current) {
@@ -146,65 +92,33 @@ export default function LogSupplementScreen() {
   }, []);
 
   if (!hasValidParams) {
-    // While the effect runs and navigates back, render nothing
     return null;
   }
 
   const handleConfirmNow = () => {
-    logSupplementEntry();
+    logActivityEntry();
   };
 
   const handleEdit = () => {
-    setEditDosage(supplement.default_dosage.toString());
+    setEditValue(activity.default_value.toString());
     setEditTimestamp(new Date());
     setShowEditModal(true);
   };
 
   const handleSaveEdit = async () => {
-    const dosage = parseFloat(editDosage);
-    if (isNaN(dosage) || dosage <= 0) {
-      Alert.alert('Error', 'Please enter a valid dosage amount');
+    const value = parseFloat(editValue);
+    if (isNaN(value) || value <= 0) {
+      Alert.alert('Error', 'Please enter a valid value');
       return;
     }
     
-    // Validate timestamp is not in the future
     if (editTimestamp.getTime() > Date.now()) {
       Alert.alert('Error', 'Cannot set a time in the future');
       return;
     }
     
-    // Check exclusion for the edited dosage
-    try {
-      const exclusionCheck = await isExclusionActive(supplement.id, dosage);
-      if (exclusionCheck.active) {
-        Alert.alert(
-          'Dose Limit Warning',
-          `${exclusionCheck.reason}\n\nDo you want to log anyway?`,
-          [
-            { 
-              text: 'Cancel', 
-              style: 'cancel'
-              // Keep the edit modal open
-            },
-            {
-              text: 'Log Anyway',
-              style: 'destructive',
-              onPress: () => {
-                setShowEditModal(false);
-                logSupplementEntry(dosage, editTimestamp, true);
-              }
-            }
-          ]
-        );
-        return;
-      }
-    } catch (error) {
-      console.error('Failed to check exclusion:', error);
-      // Continue with logging if exclusion check fails
-    }
-    
     setShowEditModal(false);
-    logSupplementEntry(dosage, editTimestamp);
+    logActivityEntry(value, editTimestamp);
   };
 
   const handleDateTimeChange = (_event: any, selectedDate?: Date) => {
@@ -271,24 +185,13 @@ export default function LogSupplementScreen() {
     router.back();
   };
 
-  if (isCheckingExclusion) {
-    return (
-      <ThemedView style={styles.container}>
-        <View style={styles.centeredContent}>
-          <Ionicons name="shield-checkmark-outline" size={60} color={tintColor} />
-          <ThemedText style={styles.checkingText}>Checking dose limits...</ThemedText>
-        </View>
-      </ThemedView>
-    );
-  }
-
   if (isLogged) {
     return (
       <ThemedView style={styles.container} safeArea>
         <View style={styles.successContent}>
           <Ionicons name="checkmark-circle" size={80} color="#34C759" />
           <ThemedText style={styles.successText}>
-            {supplement?.name || 'Supplement'} has been logged.
+            {activity?.name || 'Activity'} has been logged.
           </ThemedText>
         </View>
       </ThemedView>
@@ -298,31 +201,18 @@ export default function LogSupplementScreen() {
   return (
     <ThemedView style={styles.container}>
       <View style={styles.centeredContent}>
-        {exclusionWarning && (
-          <View style={styles.warningBanner}>
-            <View style={styles.warningHeader}>
-              <Ionicons name="warning" size={24} color="#FF3B30" />
-              <ThemedText style={styles.warningTitle}>Dose Limit Warning</ThemedText>
-            </View>
-            <ThemedText style={styles.warningText}>{exclusionWarning}</ThemedText>
-            <TouchableOpacity style={styles.warningCancelButton} onPress={handleCancelWarning}>
-              <ThemedText style={styles.warningCancelText}>Go Back</ThemedText>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        <View style={styles.supplementInfo}>
+        <View style={styles.activityInfo}>
           <Ionicons
-            name={(supplement?.icon_id || 'medical') as any}
+            name={(activity?.icon_id || 'fitness') as any}
             size={60}
-            color={tintColor}
-            style={styles.supplementIcon}
+            color={activity?.color || tintColor}
+            style={styles.activityIcon}
           />
-          <ThemedText type="title" style={styles.supplementName}>
-            {supplement?.name || 'Unknown Supplement'}
+          <ThemedText type="title" style={styles.activityName}>
+            {activity?.name || 'Unknown Activity'}
           </ThemedText>
-          <ThemedText style={styles.dosageText}>
-            {supplement?.default_dosage || 0} {supplement?.dosage_unit || 'mg'}
+          <ThemedText style={styles.valueText}>
+            {activity?.default_value || 0} {activity?.unit || 'unit'}
           </ThemedText>
         </View>
 
@@ -351,7 +241,6 @@ export default function LogSupplementScreen() {
         </View>
       </View>
 
-      {/* Edit Modal */}
       <Modal
         visible={showEditModal}
         animationType="slide"
@@ -376,17 +265,17 @@ export default function LogSupplementScreen() {
             
             <ScrollView style={styles.modalScrollContent} keyboardShouldPersistTaps="handled">
               <View style={styles.editSection}>
-                <ThemedText style={styles.editLabel}>Dosage</ThemedText>
-                <View style={styles.dosageInputContainer}>
+                <ThemedText style={styles.editLabel}>Value</ThemedText>
+                <View style={styles.valueInputContainer}>
                   <TextInput
-                    style={styles.dosageInput}
-                    value={editDosage}
-                    onChangeText={setEditDosage}
+                    style={styles.valueInput}
+                    value={editValue}
+                    onChangeText={setEditValue}
                     placeholder="0"
                     keyboardType="numeric"
                     placeholderTextColor="#999"
                   />
-                  <ThemedText style={styles.dosageUnit}>{supplement?.dosage_unit || 'mg'}</ThemedText>
+                  <ThemedText style={styles.valueUnit}>{activity?.unit || 'unit'}</ThemedText>
                 </View>
               </View>
 
@@ -402,7 +291,7 @@ export default function LogSupplementScreen() {
                   <Ionicons name="calendar" size={20} color="#8E8E93" />
                 </TouchableOpacity>
                 <ThemedText style={styles.editNote}>
-                  Tap to adjust when you took this supplement
+                  Tap to adjust when you did this activity
                 </ThemedText>
               </View>
             </ScrollView>
@@ -411,7 +300,6 @@ export default function LogSupplementScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Date/Time Picker - iOS wrapped in modal with confirm button */}
       {showDateTimePicker && Platform.OS === 'ios' && (
         <Modal
           visible={true}
@@ -480,59 +368,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     paddingBottom: 100,
   },
-  warningBanner: {
-    width: '100%',
-    borderWidth: 2,
-    borderColor: '#FF3B30',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-    backgroundColor: 'rgba(255, 59, 48, 0.05)',
-  },
-  warningHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  warningTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FF3B30',
-    marginLeft: 8,
-  },
-  warningText: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 16,
-  },
-  warningCancelButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#8E8E93',
-    alignItems: 'center',
-    alignSelf: 'center',
-  },
-  warningCancelText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#8E8E93',
-  },
-  supplementInfo: {
+  activityInfo: {
     alignItems: 'center',
     marginBottom: 60,
   },
-  supplementIcon: {
+  activityIcon: {
     marginBottom: 16,
   },
-  supplementName: {
+  activityName: {
     fontSize: 32,
     fontWeight: 'bold',
     textAlign: 'center',
     marginBottom: 8,
   },
-  dosageText: {
+  valueText: {
     fontSize: 18,
     color: '#8E8E93',
     textAlign: 'center',
@@ -573,12 +422,6 @@ const styles = StyleSheet.create({
     color: '#34C759',
     textAlign: 'center',
     marginTop: 20,
-  },
-  checkingText: {
-    fontSize: 16,
-    color: '#8E8E93',
-    marginTop: 16,
-    textAlign: 'center',
   },
   modalOverlay: {
     flex: 1,
@@ -623,7 +466,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 12,
   },
-  dosageInputContainer: {
+  valueInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F8F8F8',
@@ -632,13 +475,13 @@ const styles = StyleSheet.create({
     borderColor: '#E0E0E0',
     paddingHorizontal: 12,
   },
-  dosageInput: {
+  valueInput: {
     flex: 1,
     fontSize: 16,
     padding: 12,
     color: '#000',
   },
-  dosageUnit: {
+  valueUnit: {
     fontSize: 16,
     color: '#8E8E93',
     marginLeft: 8,
@@ -664,34 +507,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#000',
     flex: 1,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
-  },
-  modalCancelButton: {
-    flex: 1,
-    backgroundColor: '#8E8E93',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  modalCancelButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  modalSaveButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  modalSaveButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
   },
   pickerModalOverlay: {
     flex: 1,

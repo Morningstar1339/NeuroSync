@@ -7,7 +7,6 @@ module.exports = {
     '^@/(.*)$': '<rootDir>/$1',
     '^expo-sqlite$': '<rootDir>/__tests__/__mocks__/expo-sqlite.ts',
     '^@react-native-async-storage/async-storage$': '<rootDir>/__tests__/__mocks__/async-storage.ts',
-    '^expo-notifications$': '<rootDir>/__tests__/__mocks__/expo-notifications.ts',
     '^expo-device$': '<rootDir>/__tests__/__mocks__/expo-device.ts',
     '^expo-constants$': '<rootDir>/__tests__/__mocks__/expo-constants.ts',
   },

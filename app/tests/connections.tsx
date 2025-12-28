@@ -10,6 +10,7 @@ import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext } from '@/database/study-scheduler';
 import Svg, { Line, Circle } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
+import { useHierarchicalBack } from '@/hooks/use-hierarchical-back';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const DOT_COUNT = 24;
@@ -33,7 +34,9 @@ export default function ConnectionsTestScreen() {
   const tintColor = useThemeColor({}, 'tint');
   const insets = useSafeAreaInsets();
   
-    const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
+  useHierarchicalBack('tests/connections');
+  
+  const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
   const [dots, setDots] = useState<Dot[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [selectedDot, setSelectedDot] = useState<number | null>(null);
@@ -53,7 +56,7 @@ export default function ConnectionsTestScreen() {
     
     // Proper bounds calculation with safe area
     const playAreaTop = insets.top + 80; // header + buffer
-    const playAreaBottom = screenHeight - insets.bottom - 50;
+    const playAreaBottom = screenHeight - insets.bottom - 150;
     const playAreaLeft = insets.left + 30;
     const playAreaRight = screenWidth - insets.right - 30;
     
@@ -252,27 +255,24 @@ export default function ConnectionsTestScreen() {
     
     const completionTime = Math.floor((Date.now() - startTimeRef.current) / 1000);
     const userLength = connections.reduce((sum, conn) => sum + conn.length, 0);
-    const baseScore = Math.round((optimalLength / userLength) * 100);
-    
-    const speedBonus = Math.max(0, Math.round((300 - completionTime) / 10));
-    let finalScore = baseScore + (baseScore >= 91 ? speedBonus : 0);
+    const efficiencyPercent = optimalLength > 0 ? (optimalLength / userLength) * 100 : 0;
+    let finalScore = Math.round((efficiencyPercent - 90) * 10);
     
     setScore(finalScore);
     setElapsedTime(completionTime);
     
     try {
-      const accuracy = optimalLength > 0 ? Math.min(1, optimalLength / userLength) : 0;
+      const accuracyDecimal = optimalLength > 0 ? Math.min(1, optimalLength / userLength) : 0;
+      const accuracy = accuracyDecimal * 100;
       const speed = completionTime;
       
       const rawData = {
         userLength,
         optimalLength,
         connections: connections.length,
-        efficiency: optimalLength > 0 ? (optimalLength / userLength) * 100 : 0,
+        efficiency: efficiencyPercent,
         completionTime,
-        baseScore,
-        speedBonus: baseScore >= 91 ? speedBonus : 0,
-        accuracy,
+        accuracy: accuracyDecimal,
         speed
       };
       
@@ -312,7 +312,7 @@ export default function ConnectionsTestScreen() {
             onPress: () => {
               if (elapsedTimer.current) clearInterval(elapsedTimer.current);
               
-              if (params.sequence === 'all-seven') {
+              if (params.sequence === 'all-nine') {
                 router.push('/tests/all-nine');
               } else {
                 router.push('/cognitive-tests');
@@ -322,7 +322,7 @@ export default function ConnectionsTestScreen() {
         ]
       );
     } else {
-      if (params.sequence === 'all-seven') {
+      if (params.sequence === 'all-nine') {
         router.push('/tests/all-nine');
       } else {
         router.push('/cognitive-tests');
@@ -331,8 +331,8 @@ export default function ConnectionsTestScreen() {
   };
 
   const handleNextTestOrFinish = () => {
-    if (params.sequence === 'all-seven') {
-      router.push('/tests/rock-dodger?sequence=all-seven');
+    if (params.sequence === 'all-nine') {
+      router.push('/tests/rock-dodger?sequence=all-nine');
     } else {
       router.push('/cognitive-tests');
     }
@@ -374,10 +374,10 @@ export default function ConnectionsTestScreen() {
       <ThemedView style={styles.container} safeArea>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.instructionsContainer}>
-          {params.sequence === 'all-seven' && (
+          {params.sequence === 'all-nine' && (
             <ThemedView style={[styles.progressBanner, { backgroundColor: tintColor + '15', borderColor: tintColor }]}>
               <ThemedText style={[styles.progressText, { color: tintColor }]}>
-                Test 3 of 7 • Run All Tests Mode
+                Test 4 of 9
               </ThemedText>
             </ThemedView>
           )}
@@ -391,11 +391,9 @@ export default function ConnectionsTestScreen() {
           )}
           <ThemedText style={styles.instructions}>
             Connect all dots into shortest tree (no loops!){'\n\n'}
-            • Tap two dots to connect/disconnect{'\n'}
-            • Keep lines short - efficiency matters{'\n'}
-            • Avoid loops - they waste distance{'\n'}
-            • Score = (Optimal ÷ Your Length) × 100{'\n'}
-            • Speed bonus if score ≥ 91
+            Tap two dots to connect/disconnect{'\n'}
+            Keep lines short - efficiency matters{'\n'}
+            Avoid loops - they waste distance{'\n'}
           </ThemedText>
           
           <ThemedView style={styles.exampleContainer}>
@@ -477,7 +475,7 @@ export default function ConnectionsTestScreen() {
              score >= 85 ? 'Good optimization!' : 
              score >= 70 ? 'Not bad!' : 'Keep practicing!'}
           </ThemedText>
-          {params.sequence === 'all-seven' ? (
+          {params.sequence === 'all-nine' ? (
             <>
               <TouchableOpacity 
                 style={[styles.startButton, { backgroundColor: tintColor }]} 
@@ -510,25 +508,24 @@ export default function ConnectionsTestScreen() {
 
   return (
     <GestureHandlerRootView style={styles.gameContainer}>
-      <ThemedView style={[styles.gameHeader, { paddingTop: insets.top + 60 }]}>
+      <ThemedView style={[styles.infoBanner, { borderColor: tintColor }]}>
         <TouchableOpacity
-          style={styles.exitButton}
+          style={styles.bannerBackButton}
           onPress={handleExitTest}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <Ionicons name="close-outline" size={24} color={tintColor} />
+          <Ionicons name="arrow-back" size={20} color={tintColor} />
         </TouchableOpacity>
-        <View style={styles.gameStats}>
-          <ThemedText style={styles.timer}>Time: {elapsedTime}s</ThemedText>
-          <ThemedText style={styles.connectionStatus}>
+        <View style={styles.bannerStats}>
+          <ThemedText style={styles.bannerStatText}>Time: {elapsedTime}s</ThemedText>
+          <ThemedText style={styles.bannerStatText}>
             {isConnected ? 'Tree Complete ✓' : 'Tree Incomplete'}
           </ThemedText>
         </View>
-        <View style={styles.headerSpacer} />
       </ThemedView>
       
       <View style={styles.gameArea}>
-        <Svg width={screenWidth} height={screenHeight - (insets.top + 80)} style={styles.svg}>
+        <Svg width={screenWidth} height={screenHeight - (insets.top + 80) - (insets.bottom + 100)} style={styles.svg}>
           {connections.map((connection, index) => (
             <Line
               key={index}
@@ -571,7 +568,7 @@ export default function ConnectionsTestScreen() {
       
       {isConnected && (
         <TouchableOpacity 
-          style={[styles.submitButton, { backgroundColor: tintColor }]} 
+          style={[styles.submitButton, { backgroundColor: tintColor, marginBottom: insets.bottom + 20 }]} 
           onPress={handleSubmit}
         >
           <ThemedText style={styles.submitButtonText}>Submit Solution</ThemedText>
@@ -641,31 +638,31 @@ const styles = StyleSheet.create({
   },
   gameContainer: {
     flex: 1,
+    paddingTop: 60,
   },
-  gameHeader: {
+  infoBanner: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-  },
-  exitButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  gameStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    flex: 1,
     marginHorizontal: 20,
+    marginBottom: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.03)',
   },
-  headerSpacer: {
-    width: 40,
-    height: 40,
+  bannerBackButton: {
+    padding: 4,
+    marginRight: 12,
+  },
+  bannerStats: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  bannerStatText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   progressBanner: {
     paddingHorizontal: 16,

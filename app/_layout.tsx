@@ -3,15 +3,19 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity, Alert, AppState as RNAppState } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity, Alert, AppState as RNAppState, LogBox } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import 'react-native-reanimated';
 
+LogBox.ignoreAllLogs();
+
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initializeDatabase, resetDatabaseState, initializeDatabaseWithRetry, checkDatabaseHealth, getDatabase } from '@/database/database';
-import { notificationManager } from '@/services/notification-manager';
+import { SleepPrompt } from '@/components/sleep-prompt';
+import { shouldPromptForSleep, isOverdueForSleepLog, isMorningWithoutSleepLog } from '@/database/sleep';
+import { addNotificationResponseListener, scheduleSleepReminder, requestNotificationPermissions } from '@/database/notifications';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -68,6 +72,8 @@ export default function RootLayout() {
   const [appState, setAppState] = useState<AppState>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [retryCount, setRetryCount] = useState(0);
+  const [showSleepPrompt, setShowSleepPrompt] = useState(false);
+  const [isOverdueReminder, setIsOverdueReminder] = useState(false);
 
   /**
    * Main app initialization routine.
@@ -99,13 +105,6 @@ export default function RootLayout() {
       setErrorMessage(error instanceof Error ? error.message : 'Unknown initialization error');
       setAppState('error');
       
-      // Try to initialize notification manager without database as fallback
-      try {
-        console.log('🔄 [INIT] Attempting fallback notification initialization...');
-        await notificationManager.initialize(false);
-      } catch (notificationError) {
-        console.error('❌ [INIT] Fallback notification initialization failed:', notificationError);
-      }
     } finally {
       // Always hide splash screen when initialization is complete (success or error)
       try {
@@ -148,6 +147,46 @@ export default function RootLayout() {
       console.log('⚠️ MEMORY WARNING RECEIVED');
       console.log('DB status during memory warning:', checkDatabaseHealth());
     });
+    return () => subscription.remove();
+  }, []);
+
+  // Request notification permissions and check for sleep prompt when app becomes ready
+  useEffect(() => {
+    if (appState !== 'ready') return;
+    
+    const initializeNotificationsAndSleep = async () => {
+      try {
+        const hasPermission = await requestNotificationPermissions();
+        console.log('Notification permissions:', hasPermission ? 'granted' : 'denied');
+        
+        const isMorningNoLog = await isMorningWithoutSleepLog();
+        const shouldPrompt = await shouldPromptForSleep();
+        
+        if (isMorningNoLog || shouldPrompt) {
+          const overdue = await isOverdueForSleepLog();
+          setIsOverdueReminder(overdue || isMorningNoLog);
+          setTimeout(() => setShowSleepPrompt(true), 500);
+        }
+        
+        await scheduleSleepReminder();
+      } catch (error) {
+        console.error('Failed to initialize notifications:', error);
+      }
+    };
+    
+    initializeNotificationsAndSleep();
+  }, [appState]);
+
+  // Handle notification responses (when user taps a notification)
+  useEffect(() => {
+    const subscription = addNotificationResponseListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data?.type === 'sleep_reminder' || data?.action === 'open_sleep_prompt') {
+        setIsOverdueReminder(true);
+        setShowSleepPrompt(true);
+      }
+    });
+
     return () => subscription.remove();
   }, []);
 
@@ -215,7 +254,7 @@ export default function RootLayout() {
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
           <Text style={styles.loadingText}>Initializing NeuroSync...</Text>
-          <Text style={styles.subText}>Setting up database and notifications</Text>
+          <Text style={styles.subText}>Setting up database</Text>
         </View>
       </SafeAreaProvider>
     );
@@ -278,22 +317,36 @@ export default function RootLayout() {
           <Stack.Screen name="tests/reflexes" options={{ headerShown: false }} />
           <Stack.Screen name="tests/memory" options={{ headerShown: false }} />
           <Stack.Screen name="tests/connections" options={{ headerShown: false }} />
-          <Stack.Screen name="tests/all-three" options={{ headerShown: false }} />
           <Stack.Screen name="tests/rock-dodger" options={{ headerShown: false }} />
           <Stack.Screen name="tests/pattern-matcher" options={{ headerShown: false }} />
-          <Stack.Screen name="tests/melody-repeater" options={{ headerShown: false }} />
           <Stack.Screen name="tests/tile-puzzle" options={{ headerShown: false }} />
-          <Stack.Screen name="tests/trail-maker" options={{ headerShown: false }} />
           <Stack.Screen name="tests/n-back" options={{ headerShown: false }} />
+          <Stack.Screen name="tests/questionnaire" options={{ headerShown: false }} />
+          <Stack.Screen name="tests/stroop" options={{ headerShown: false }} />
           <Stack.Screen name="tests/all-nine" options={{ headerShown: false }} />
+          <Stack.Screen name="cognitive-test-reminders" options={{ headerShown: false }} />
+          <Stack.Screen name="my-schedules" options={{ headerShown: false }} />
+          <Stack.Screen name="export" options={{ headerShown: false }} />
+          <Stack.Screen name="help" options={{ headerShown: false }} />
+          <Stack.Screen name="insights" options={{ headerShown: false }} />
+          <Stack.Screen name="supplement-reminders" options={{ headerShown: false }} />
           <Stack.Screen name="settings" options={{ headerShown: false }} />
           <Stack.Screen name="database-debug" options={{ headerShown: false }} />
           <Stack.Screen name="invariant-test" options={{ headerShown: false }} />
-          {/* DISABLED FOR V1 - Re-enable for Mk II */}
-          {/* <Stack.Screen name="sleep-logs" options={{ headerShown: false }} /> */}
+          <Stack.Screen name="activities" options={{ headerShown: false }} />
+          <Stack.Screen name="add-activity" options={{ headerShown: false }} />
+          <Stack.Screen name="edit-activity" options={{ headerShown: false }} />
+          <Stack.Screen name="log-activity" options={{ headerShown: false }} />
+          <Stack.Screen name="sleep-logs" options={{ headerShown: false }} />
+          <Stack.Screen name="daily-review" options={{ headerShown: false }} />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         </Stack>
         <StatusBar style="auto" />
+        <SleepPrompt
+          visible={showSleepPrompt}
+          onClose={() => setShowSleepPrompt(false)}
+          isOverdueReminder={isOverdueReminder}
+        />
       </ThemeProvider>
     </SafeAreaProvider>
   );
@@ -335,13 +388,8 @@ async function initializeProductionBuild(retryCount: number) {
       }
     });
 
-    // Initialize notification manager after database is confirmed ready
-    console.log('🏭 [PROD-INIT] Step 3: Notification manager initialization...');
-    await notificationManager.initialize(true);
-    notificationManager.setDatabaseReady();
-    
     // Start periodic database connection refresh
-    console.log('🏭 [PROD-INIT] Step 4: Starting database connection keep-alive...');
+    console.log('🏭 [PROD-INIT] Step 3: Starting database connection keep-alive...');
     startDatabaseKeepAlive();
     
     console.log('✅ [PROD-INIT] Production initialization completed successfully');
@@ -377,12 +425,7 @@ async function initializeDevelopmentBuild() {
     
     console.log(`🔧 [DEV-INIT] Database initialized successfully on attempt ${dbResult.attempts}`);
 
-    // Step 2: Initialize notification manager with database ready
-    console.log('🔧 [DEV-INIT] Initializing notification manager...');
-    await notificationManager.initialize(true);
-    notificationManager.setDatabaseReady();
-    
-    // Step 3: Start periodic database connection refresh
+    // Step 2: Start periodic database connection refresh
     console.log('🔧 [DEV-INIT] Starting database connection keep-alive...');
     startDatabaseKeepAlive();
     

@@ -11,6 +11,7 @@ import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUser
 import { validateTestPrerequisites, handleTestSaveError } from '@/utils/test-validation';
 import { checkDatabaseHealth } from '@/database/database';
 import { Ionicons } from '@expo/vector-icons';
+import { useHierarchicalBack } from '@/hooks/use-hierarchical-back';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const BUBBLE_SIZE = 40; // ~1cm on most devices
@@ -26,14 +27,14 @@ export default function ReflexesTestScreen() {
   const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
   const insets = useSafeAreaInsets();
+  
+  useHierarchicalBack('tests/reflexes');
   const [gameAreaSize, setGameAreaSize] = useState({ width: 0, height: 0 });
   const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
+  const [inputsDisabled, setInputsDisabled] = useState(false);
   const [score, setScore] = useState(0);
   const [hits, setHits] = useState(0);
   const [misses, setMisses] = useState(0);
-  const [totalTargets, setTotalTargets] = useState(0);
-  const [reactionTimes, setReactionTimes] = useState<number[]>([]);
-  const lastBubbleTime = useRef<number>(0);
   const [timeLeft, setTimeLeft] = useState(TEST_DURATION / 1000);
   const [bubblePosition, setBubblePosition] = useState<BubblePosition>({ x: 0, y: 0 });
   const [scheduledTest, setScheduledTest] = useState<any>(null);
@@ -42,6 +43,10 @@ export default function ReflexesTestScreen() {
   
   const gameTimer = useRef<number | null>(null);
   const countdownTimer = useRef<number | null>(null);
+  const justTappedBubble = useRef<boolean>(false);
+  const hitsRef = useRef(0);
+  const missesRef = useRef(0);
+  const gameEndedRef = useRef(false);
 
 const generateRandomPosition = (): BubblePosition => {
   // If we don't know the layout yet, just center the bubble as a fallback
@@ -112,14 +117,14 @@ const generateRandomPosition = (): BubblePosition => {
   };
 
   const startGameNow = () => {
-    setGameState('playing');
+    hitsRef.current = 0;
+    missesRef.current = 0;
+    gameEndedRef.current = false;
     setScore(0);
     setHits(0);
     setMisses(0);
-    setTotalTargets(1);
-    setReactionTimes([]);
     setTimeLeft(TEST_DURATION / 1000);
-    lastBubbleTime.current = Date.now();
+    setGameState('playing');
     setBubblePosition(generateRandomPosition());
     
     // Start countdown timer
@@ -140,38 +145,48 @@ const generateRandomPosition = (): BubblePosition => {
   };
 
   const endGame = async () => {
-    setGameState('finished');
+    if (gameEndedRef.current) {
+      return;
+    }
+    gameEndedRef.current = true;
+    
     if (gameTimer.current) {
       clearTimeout(gameTimer.current);
+      gameTimer.current = null;
     }
     if (countdownTimer.current) {
       clearInterval(countdownTimer.current);
+      countdownTimer.current = null;
     }
     
-    // Save test result with graceful error handling
+    const finalHits = hitsRef.current;
+    const finalMisses = missesRef.current;
+    
+    console.log('🎮 REFLEXES endGame called:', { finalHits, finalMisses, hitsRef: hitsRef.current, missesRef: missesRef.current });
+    const accuracyDecimal = (finalHits + finalMisses) > 0 ? finalHits / (finalHits + finalMisses) : 1;
+    const accuracyPercent = accuracyDecimal * 100;
+    const finalScore = Math.round(6 * (finalHits - finalMisses) * accuracyDecimal);
+    
+    setHits(finalHits);
+    setMisses(finalMisses);
+    setScore(finalScore);
+    
     const saveTestResult = async () => {
       try {
-        console.log('🔄 REFLEXES TEST: Saving test result...');
+        console.log('🔄 REFLEXES TEST: Saving test result...', { finalHits, finalMisses, finalScore });
         const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
         const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
         
-        const accuracy = totalTargets > 0 ? hits / totalTargets : 0;
-        const avgReactionTime = reactionTimes.length > 0 
-          ? reactionTimes.reduce((a, b) => a + b, 0) / reactionTimes.length 
-          : 0;
-        
         const rawData = {
-          finalScore: score,
+          finalScore: finalScore,
           testDuration: TEST_DURATION / 1000,
-          bubblesHit: hits,
-          misses: misses,
-          totalTargets,
-          accuracy,
-          speed: avgReactionTime
+          bubblesHit: finalHits,
+          misses: finalMisses,
+          totalTaps: finalHits + finalMisses,
+          accuracy: accuracyPercent
         };
-        await saveCognitiveTestResult('reflexes', score, rawData, TEST_DURATION / 1000, studyId, supplementLogId, accuracy, avgReactionTime);
+        await saveCognitiveTestResult('reflexes', finalScore, rawData, TEST_DURATION / 1000, studyId, supplementLogId, accuracyPercent);
         
-        // Mark scheduled test as completed if this was for a study
         if (scheduledTest) {
           await completeScheduledTest(scheduledTest.id);
         }
@@ -180,35 +195,39 @@ const generateRandomPosition = (): BubblePosition => {
       } catch (error) {
         console.log('❌ REFLEXES TEST: Failed to save test result:', error);
         
-        // Show error alert with retry option
         handleTestSaveError(
           'Reflexes',
           error,
-          saveTestResult, // Retry function
-          handleBackToMenu // Return to menu function
+          saveTestResult,
+          handleBackToMenu
         );
       }
     };
     
     await saveTestResult();
+    
+    setGameState('finished');
+    setInputsDisabled(true);
+    setTimeout(() => setInputsDisabled(false), 1000);
   };
 
-  const handleBubbleTap = () => {
+  const handleBubbleTap = (e: any) => {
+    e.stopPropagation();
     if (gameState === 'playing') {
-      const reactionTime = Date.now() - lastBubbleTime.current;
-      setReactionTimes(prev => [...prev, reactionTime]);
-      setHits(prev => prev + 1);
-      setScore(prev => prev + 1);
-      setTotalTargets(prev => prev + 1);
-      lastBubbleTime.current = Date.now();
+      justTappedBubble.current = true;
+      setTimeout(() => { justTappedBubble.current = false; }, 50);
+      hitsRef.current += 1;
+      setHits(hitsRef.current);
+      setScore(hitsRef.current - missesRef.current);
       setBubblePosition(generateRandomPosition());
     }
   };
 
   const handleScreenTap = () => {
-    if (gameState === 'playing') {
-      setMisses(prev => prev + 1);
-      setScore(prev => prev - 1);
+    if (gameState === 'playing' && !justTappedBubble.current) {
+      missesRef.current += 1;
+      setMisses(missesRef.current);
+      setScore(hitsRef.current - missesRef.current);
     }
   };
 
@@ -238,7 +257,7 @@ const generateRandomPosition = (): BubblePosition => {
                 clearInterval(countdownTimer.current);
               }
               
-              if (params.sequence === 'all-seven') {
+              if (params.sequence === 'all-nine') {
                 router.push('/tests/all-nine');
               } else {
                 router.push('/cognitive-tests');
@@ -248,7 +267,7 @@ const generateRandomPosition = (): BubblePosition => {
         ]
       );
     } else {
-      if (params.sequence === 'all-seven') {
+      if (params.sequence === 'all-nine') {
         router.push('/tests/all-nine');
       } else {
         router.push('/cognitive-tests');
@@ -261,8 +280,8 @@ const generateRandomPosition = (): BubblePosition => {
   };
 
   const handleNextTestOrFinish = () => {
-    if (params.sequence === 'all-seven') {
-      router.push('/tests/memory?sequence=all-seven');
+    if (params.sequence === 'all-nine') {
+      router.push('/tests/memory?sequence=all-nine');
     } else {
       router.push('/cognitive-tests');
     }
@@ -302,13 +321,30 @@ const generateRandomPosition = (): BubblePosition => {
     };
   }, []);
 
-  // Navigation event logging
   useFocusEffect(
     React.useCallback(() => {
       console.log('📱 NAVIGATED TO: Reflexes Test');
       console.log('DB status on navigation:', checkDatabaseHealth());
+      
+      hitsRef.current = 0;
+      missesRef.current = 0;
+      gameEndedRef.current = false;
+      setHits(0);
+      setMisses(0);
+      setScore(0);
+      setGameState('ready');
+      setTimeLeft(TEST_DURATION / 1000);
+      
       return () => {
         console.log('📱 NAVIGATING AWAY FROM: Reflexes Test');
+        if (gameTimer.current) {
+          clearTimeout(gameTimer.current);
+          gameTimer.current = null;
+        }
+        if (countdownTimer.current) {
+          clearInterval(countdownTimer.current);
+          countdownTimer.current = null;
+        }
       };
     }, [])
   );
@@ -318,10 +354,10 @@ const generateRandomPosition = (): BubblePosition => {
       <ThemedView style={styles.container} safeArea>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.instructionsContainer}>
-          {params.sequence === 'all-seven' && (
+          {params.sequence === 'all-nine' && (
             <ThemedView style={[styles.progressBanner, { backgroundColor: tintColor + '15', borderColor: tintColor }]}>
               <ThemedText style={[styles.progressText, { color: tintColor }]}>
-                Test 1 of 7 • Run All Tests Mode
+                Test 2 of 9
               </ThemedText>
             </ThemedView>
           )}
@@ -341,10 +377,7 @@ const generateRandomPosition = (): BubblePosition => {
             </ThemedView>
           )}
           <ThemedText style={styles.instructions}>
-            Tap the bubbles as quickly as possible!{'\n\n'}
-            • +1 point for each bubble tapped{'\n'}
-            • -1 point for tapping empty space{'\n'}
-            • Test duration: 10 seconds
+            Tap the dots as quickly as possible for 10 seconds!
           </ThemedText>
           <TouchableOpacity 
             style={[styles.startButton, { backgroundColor: tintColor }]} 
@@ -368,36 +401,38 @@ const generateRandomPosition = (): BubblePosition => {
           <ThemedView style={styles.resultsContainer}>
           <ThemedText type="title" style={styles.title}>Test Complete!</ThemedText>
           <ThemedText style={styles.finalScore}>Final Score: {score}</ThemedText>
-          <ThemedText style={styles.metricText}>Accuracy: {totalTargets > 0 ? ((hits / totalTargets) * 100).toFixed(1) : '0'}% | Speed: {reactionTimes.length > 0 ? (reactionTimes.reduce((a, b) => a + b, 0) / reactionTimes.length).toFixed(0) : '0'}ms</ThemedText>
+          <ThemedText style={styles.metricText}>Accuracy: {(hits + misses) > 0 ? ((hits / (hits + misses)) * 100).toFixed(1) : '100'}%</ThemedText>
           <ThemedText style={styles.metricText}>Bubbles Hit: {hits}</ThemedText>
           <ThemedText style={styles.metricText}>Misses: {misses}</ThemedText>
           <ThemedText style={styles.metricText}>Test Duration: {TEST_DURATION / 1000}s</ThemedText>
           <ThemedText style={styles.resultMessage}>
-            {score >= 15 ? 'Excellent reflexes!' : 
-             score >= 10 ? 'Good performance!' : 
-             score >= 5 ? 'Not bad!' : 'Keep practicing!'}
+            {score >= 80 ? 'Excellent reflexes!' : 
+             score >= 50 ? 'Good performance!' : 
+             score >= 25 ? 'Not bad!' : 'Keep practicing!'}
           </ThemedText>
-          {params.sequence === 'all-seven' ? (
+          {params.sequence === 'all-nine' ? (
             <>
               <TouchableOpacity 
-                style={[styles.startButton, { backgroundColor: tintColor }]} 
+                style={[styles.startButton, { backgroundColor: tintColor }, inputsDisabled && { opacity: 0.5 }]} 
                 onPress={handleNextTestOrFinish}
+                disabled={inputsDisabled}
               >
                 <ThemedText style={styles.startButtonText}>Next Test</ThemedText>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.backButton} onPress={handleExitTest}>
+              <TouchableOpacity style={[styles.backButton, inputsDisabled && { opacity: 0.5 }]} onPress={handleExitTest} disabled={inputsDisabled}>
                 <ThemedText style={styles.backButtonText}>Exit Test Battery</ThemedText>
               </TouchableOpacity>
             </>
           ) : (
             <>
               <TouchableOpacity 
-                style={[styles.startButton, { backgroundColor: tintColor }]} 
+                style={[styles.startButton, { backgroundColor: tintColor }, inputsDisabled && { opacity: 0.5 }]} 
                 onPress={handlePlayAgain}
+                disabled={inputsDisabled}
               >
                 <ThemedText style={styles.startButtonText}>Play Again</ThemedText>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.backButton} onPress={handleBackToMenu}>
+              <TouchableOpacity style={[styles.backButton, inputsDisabled && { opacity: 0.5 }]} onPress={handleBackToMenu} disabled={inputsDisabled}>
                 <ThemedText style={styles.backButtonText}>Back to Menu</ThemedText>
               </TouchableOpacity>
             </>
@@ -410,23 +445,22 @@ const generateRandomPosition = (): BubblePosition => {
 
   return (
     <TouchableOpacity 
-      style={styles.gameContainer} 
+      style={[styles.gameContainer, { paddingTop: insets.top + 10 }]} 
       onPress={handleScreenTap}
       activeOpacity={1}
     >
-      <ThemedView style={[styles.gameHeader, { paddingTop: insets.top + 60 }]}>
+      <ThemedView style={[styles.infoBanner, { borderColor: tintColor }]}>
         <TouchableOpacity
-          style={styles.exitButton}
+          style={styles.bannerBackButton}
           onPress={handleExitTest}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <Ionicons name="close-outline" size={24} color={tintColor} />
+          <Ionicons name="arrow-back" size={20} color={tintColor} />
         </TouchableOpacity>
-        <View style={styles.gameStats}>
-          <ThemedText style={styles.timer}>Time: {timeLeft}s</ThemedText>
-          <ThemedText style={styles.scoreText}>Score: {score}</ThemedText>
+        <View style={styles.bannerStats}>
+          <ThemedText style={styles.bannerStatText}>Time: {timeLeft}s</ThemedText>
+          <ThemedText style={styles.bannerStatText}>Score: {score}</ThemedText>
         </View>
-        <View style={styles.headerSpacer} />
       </ThemedView>
       
       <View
@@ -511,33 +545,32 @@ const styles = StyleSheet.create({
   },
   gameContainer: {
     flex: 1,
+    paddingTop: 20,
     backgroundColor: 'transparent',
   },
-  gameHeader: {
+  infoBanner: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
-  },
-  exitButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  gameStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    flex: 1,
     marginHorizontal: 20,
+    marginBottom: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.03)',
   },
-  headerSpacer: {
-    width: 40,
-    height: 40,
+  bannerBackButton: {
+    padding: 4,
+    marginRight: 12,
+  },
+  bannerStats: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  bannerStatText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   timer: {
     fontSize: 18,

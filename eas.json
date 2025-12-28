@@ -15,12 +15,15 @@
       }
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
     },
     "production": {
       "autoIncrement": true,
       "android": {
-        "buildType": "aab",
+        "buildType": "app-bundle",
         "credentialsSource": "remote"
       },
       "ios": {

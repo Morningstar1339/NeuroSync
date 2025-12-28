@@ -13,8 +13,10 @@ import {
   getExportStats,
   ExportOptions
 } from '@/database/export';
+import { useHierarchicalBack } from '@/hooks/use-hierarchical-back';
 
 export default function ExportScreen() {
+  useHierarchicalBack('export');
   const router = useRouter();
   const tintColor = useThemeColor({}, 'tint');
   const backgroundColor = useThemeColor({}, 'background');
@@ -26,19 +28,17 @@ export default function ExportScreen() {
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set([
-    'supplement_logs', 'symptom_logs', 'cognitive_test_results', 'sleep_logs'
+    'supplement_logs', 'cognitive_test_results'
   ]));
 
   const tableOptions = [
-    { key: 'supplements', label: 'Supplements', description: 'List of all supplements' },
     { key: 'supplement_logs', label: 'Supplement Logs', description: 'All supplement intake records' },
-    { key: 'symptoms', label: 'Symptoms', description: 'List of all symptoms' },
-    { key: 'symptom_logs', label: 'Symptom Logs', description: 'All symptom occurrence records' },
     { key: 'cognitive_test_results', label: 'Cognitive Test Results', description: 'All test scores and data' },
-    { key: 'sleep_logs', label: 'Sleep Logs', description: 'All sleep tracking data' },
+    { key: 'sleep_logs', label: 'Sleep Logs', description: 'Sleep duration and timing records' },
+    { key: 'activity_logs', label: 'Activity Logs', description: 'Activity tracking records' },
+    { key: 'daily_reviews', label: 'Daily Reviews', description: 'Daily wellness and mood reviews' },
     { key: 'schedules', label: 'Schedules', description: 'Supplement reminder schedules' },
-    { key: 'exclusions', label: 'Exclusions', description: 'Supplement exclusion rules' },
-    { key: 'study_protocols', label: 'Study Protocols', description: 'Cognitive study configurations' }
+    { key: 'supplements', label: 'Supplements', description: 'List of all supplements' }
   ];
 
   useEffect(() => {
@@ -297,11 +297,12 @@ export default function ExportScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 60,
   },
   header: {
     paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingTop: 24,
+    paddingBottom: 12,
+    marginBottom: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',

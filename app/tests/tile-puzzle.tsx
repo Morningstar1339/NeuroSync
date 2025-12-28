@@ -6,6 +6,8 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { saveCognitiveTestResult } from '@/database/cognitive-tests';
 import { getRelevantScheduledTest, completeScheduledTest, getTestContext, isUserInActiveTestSession } from '@/database/study-scheduler';
+import { useHierarchicalBack } from '@/hooks/use-hierarchical-back';
+import { Ionicons } from '@expo/vector-icons';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const GRID_SIZE = 3;
@@ -18,10 +20,11 @@ export default function TilePuzzleTestScreen() {
   const params = useLocalSearchParams();
   const tintColor = useThemeColor({}, 'tint');
   
+  useHierarchicalBack('tests/tile-puzzle');
+  
   const [gameState, setGameState] = useState<'ready' | 'playing' | 'finished'>('ready');
   const [puzzle, setPuzzle] = useState<PuzzleState>([]);
   const [moves, setMoves] = useState(0);
-  const [optimalMoves, setOptimalMoves] = useState(0);
   const [scheduledTest, setScheduledTest] = useState<any>(null);
   const [studyContext, setStudyContext] = useState<any>(null);
   const [activeTestSession, setActiveTestSession] = useState<any>(null);
@@ -129,64 +132,6 @@ export default function TilePuzzleTestScreen() {
     }
   };
 
-  const calculateOptimalMoves = (initialPuzzle: PuzzleState): number => {
-    const stateToString = (state: PuzzleState): string => {
-      return state.flat().map(t => t === null ? '0' : t.toString()).join(',');
-    };
-    
-    const goalState = createSolvedPuzzle();
-    const goalString = stateToString(goalState);
-    const startString = stateToString(initialPuzzle);
-    
-    if (startString === goalString) return 0;
-    
-    const visited = new Set<string>();
-    const queue: { state: PuzzleState; moves: number }[] = [{ state: initialPuzzle, moves: 0 }];
-    visited.add(startString);
-    
-    const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-    
-    while (queue.length > 0) {
-      const { state, moves } = queue.shift()!;
-      
-      let emptyRow = -1, emptyCol = -1;
-      for (let i = 0; i < GRID_SIZE; i++) {
-        for (let j = 0; j < GRID_SIZE; j++) {
-          if (state[i][j] === null) {
-            emptyRow = i;
-            emptyCol = j;
-            break;
-          }
-        }
-        if (emptyRow !== -1) break;
-      }
-      
-      for (const [dr, dc] of directions) {
-        const newRow = emptyRow + dr;
-        const newCol = emptyCol + dc;
-        
-        if (newRow >= 0 && newRow < GRID_SIZE && newCol >= 0 && newCol < GRID_SIZE) {
-          const newState = state.map(row => [...row]);
-          newState[emptyRow][emptyCol] = newState[newRow][newCol];
-          newState[newRow][newCol] = null;
-          
-          const newString = stateToString(newState);
-          
-          if (newString === goalString) {
-            return moves + 1;
-          }
-          
-          if (!visited.has(newString)) {
-            visited.add(newString);
-            queue.push({ state: newState, moves: moves + 1 });
-          }
-        }
-      }
-    }
-    
-    return -1;
-  };
-
   const startGame = async () => {
     try {
       const activeSession = await isUserInActiveTestSession();
@@ -210,12 +155,10 @@ export default function TilePuzzleTestScreen() {
 
   const startGameNow = () => {
     const newPuzzle = shufflePuzzle();
-    const optimal = calculateOptimalMoves(newPuzzle);
     
     setGameState('playing');
     setPuzzle(newPuzzle);
     setMoves(0);
-    setOptimalMoves(optimal);
     setIsGiveUpPressed(false);
     setCompletionTime(0);
     startTime.current = Date.now();
@@ -224,22 +167,17 @@ export default function TilePuzzleTestScreen() {
   const endGame = async (solved: boolean) => {
     setGameState('finished');
     
-    // Always calculate completion time (whether solved or gave up)
     const finalCompletionTime = (Date.now() - startTime.current) / 1000;
     setCompletionTime(finalCompletionTime);
     
-    const efficiency = solved && moves > 0 ? optimalMoves / moves : 0;
-    
-    const accuracy = solved ? efficiency : 0;
+    const accuracy = solved ? 100 : 0;
     const speed = finalCompletionTime;
     
     const rawData = {
       completion_time: finalCompletionTime,
       total_moves: moves,
-      optimal_moves: optimalMoves,
       gave_up: !solved,
       solved,
-      efficiency,
       accuracy,
       speed
     };
@@ -248,7 +186,7 @@ export default function TilePuzzleTestScreen() {
       const studyId = scheduledTest ? studyContext?.study_protocol_id : undefined;
       const supplementLogId = scheduledTest ? studyContext?.supplement_log_id : undefined;
       
-      const score = solved ? Math.floor(efficiency * 100) : 0;
+      const score = solved ? 130 - moves : 0;
       await saveCognitiveTestResult('tile_puzzle', score, rawData, finalCompletionTime, studyId, supplementLogId, accuracy, speed);
       
       if (scheduledTest) {
@@ -274,7 +212,7 @@ export default function TilePuzzleTestScreen() {
   };
 
   const handleBackToMenu = () => {
-    if (params.sequence === 'all-seven') {
+    if (params.sequence === 'all-nine') {
       router.push('/tests/all-nine');
     } else {
       router.push('/cognitive-tests');
@@ -282,8 +220,8 @@ export default function TilePuzzleTestScreen() {
   };
 
   const handleNextTestOrFinish = () => {
-    if (params.sequence === 'all-seven') {
-      router.push('/tests/n-back?sequence=all-seven');
+    if (params.sequence === 'all-nine') {
+      router.push('/tests/n-back?sequence=all-nine');
     } else {
       router.push('/cognitive-tests');
     }
@@ -320,6 +258,13 @@ export default function TilePuzzleTestScreen() {
       <ThemedView style={styles.container} safeArea>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ThemedView style={styles.instructionsContainer}>
+            {params.sequence === 'all-nine' && (
+              <ThemedView style={[styles.progressBanner, { backgroundColor: tintColor + '15', borderColor: tintColor }]}>
+                <ThemedText style={[styles.progressText, { color: tintColor }]}>
+                  Test 7 of 9
+                </ThemedText>
+              </ThemedView>
+            )}
             <ThemedText type="title" style={styles.title}>8-Tile Puzzle</ThemedText>
             {scheduledTest && studyContext?.supplement_name && (
               <ThemedView style={[styles.studyBanner, { backgroundColor: tintColor + '20', borderColor: tintColor }]}>
@@ -358,7 +303,6 @@ export default function TilePuzzleTestScreen() {
   }
 
   if (gameState === 'finished') {
-    const efficiency = moves > 0 ? (optimalMoves / moves) * 100 : 0;
     const wasSolved = !isGiveUpPressed && isPuzzleSolved(puzzle);
     
     return (
@@ -368,18 +312,14 @@ export default function TilePuzzleTestScreen() {
             <ThemedText type="title" style={styles.title}>
               {wasSolved ? 'Puzzle Solved!' : 'Game Over'}
             </ThemedText>
-            <ThemedText style={styles.metricText}>Accuracy: {(efficiency * 100).toFixed(1)}% | Speed: {completionTime.toFixed(1)}s</ThemedText>
             <ThemedText style={styles.metricText}>Total Moves: {moves}</ThemedText>
-            <ThemedText style={styles.metricText}>Optimal Moves: {optimalMoves}</ThemedText>
-            {wasSolved && (
-              <ThemedText style={styles.metricText}>Efficiency: {efficiency.toFixed(1)}%</ThemedText>
-            )}
+            <ThemedText style={styles.metricText}>Time: {completionTime.toFixed(1)}s</ThemedText>
             <ThemedText style={styles.resultMessage}>
-              {wasSolved && efficiency >= 80 ? 'Outstanding spatial reasoning!' : 
-               wasSolved && efficiency >= 60 ? 'Great problem solving!' : 
+              {wasSolved && moves <= 30 ? 'Outstanding spatial reasoning!' : 
+               wasSolved && moves <= 50 ? 'Great problem solving!' : 
                wasSolved ? 'Good work!' : 'Keep practicing!'}
             </ThemedText>
-            {params.sequence === 'all-seven' ? (
+            {params.sequence === 'all-nine' ? (
               <>
                 <TouchableOpacity 
                   style={[styles.startButton, { backgroundColor: tintColor }]} 
@@ -412,9 +352,17 @@ export default function TilePuzzleTestScreen() {
 
   return (
     <ThemedView style={styles.container} safeArea>
-      <ThemedView style={styles.gameHeader}>
-        <ThemedText style={styles.movesText}>Moves: {moves}</ThemedText>
-        <ThemedText style={styles.optimalText}>Optimal: {optimalMoves}</ThemedText>
+      <ThemedView style={[styles.infoBanner, { borderColor: tintColor }]}>
+        <TouchableOpacity
+          style={styles.bannerBackButton}
+          onPress={handleBackToMenu}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="arrow-back" size={20} color={tintColor} />
+        </TouchableOpacity>
+        <View style={styles.bannerStats}>
+          <ThemedText style={styles.bannerStatText}>Moves: {moves}</ThemedText>
+        </View>
       </ThemedView>
 
       <View style={styles.puzzleContainer}>
@@ -530,18 +478,32 @@ const styles = StyleSheet.create({
     fontSize: 16,
     opacity: 0.7,
   },
-  gameHeader: {
+  infoBanner: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 100,
-    paddingBottom: 20,
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginTop: 20,
+    marginBottom: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.03)',
   },
-  movesText: {
-    fontSize: 18,
+  bannerBackButton: {
+    padding: 4,
+    marginRight: 12,
+  },
+  bannerStats: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  bannerStatText: {
+    fontSize: 14,
     fontWeight: '600',
   },
-  optimalText: {
+  movesText: {
     fontSize: 18,
     fontWeight: '600',
   },
@@ -662,6 +624,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   warningText: {
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  progressBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 15,
+    alignItems: 'center',
+  },
+  progressText: {
     fontSize: 14,
     fontWeight: '600',
     textAlign: 'center',
